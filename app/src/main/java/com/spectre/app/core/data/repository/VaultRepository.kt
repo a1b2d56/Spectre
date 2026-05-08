@@ -2,17 +2,21 @@ package com.spectre.app.core.data.repository
 
 import com.spectre.app.core.crypto.BitwardenCrypto
 import com.spectre.app.core.crypto.EncString
+import com.spectre.app.core.crypto.SymmetricKey
 import com.spectre.app.core.data.database.dao.*
 import com.spectre.app.core.data.database.entities.*
 import com.spectre.app.core.data.models.*
 import com.spectre.app.core.network.VaultApi
 import com.spectre.app.core.network.model.*
 import com.spectre.app.core.security.VaultSession
+import com.spectre.app.di.IoDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,73 +28,93 @@ class VaultRepository @Inject constructor(
     private val collectionDao: CollectionDao,
     private val organizationDao: OrganizationDao,
     private val sendDao: SendDao,
+    private val accountDao: AccountDao,
     private val session: VaultSession,
     private val crypto: BitwardenCrypto,
     private val json: Json,
+    @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) {
 
-    // ── Observe decrypted vault ───────────────────────────────────────────────
+    // Observe decrypted vault
 
     fun observeAllCiphers(): Flow<List<DecryptedCipher>> {
         val accountId = session.activeAccountId ?: return flowOf(emptyList())
         return cipherDao.observeAll(accountId).map { entities ->
             entities.mapNotNull { decryptCipher(it) }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(ioDispatcher)
     }
 
     fun observeFavorites(): Flow<List<DecryptedCipher>> {
         val accountId = session.activeAccountId ?: return flowOf(emptyList())
         return cipherDao.observeFavorites(accountId).map { list ->
             list.mapNotNull { decryptCipher(it) }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(ioDispatcher)
     }
 
     fun observeByType(type: CipherType): Flow<List<DecryptedCipher>> {
         val accountId = session.activeAccountId ?: return flowOf(emptyList())
         return cipherDao.observeByType(accountId, type.value).map { list ->
             list.mapNotNull { decryptCipher(it) }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(ioDispatcher)
     }
 
     fun observeTrash(): Flow<List<DecryptedCipher>> {
         val accountId = session.activeAccountId ?: return flowOf(emptyList())
         return cipherDao.observeTrash(accountId).map { list ->
             list.mapNotNull { decryptCipher(it) }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(ioDispatcher)
     }
 
     fun observeFolder(folderId: String): Flow<List<DecryptedCipher>> {
         val accountId = session.activeAccountId ?: return flowOf(emptyList())
         return cipherDao.observeByFolder(accountId, folderId).map { list ->
             list.mapNotNull { decryptCipher(it) }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(ioDispatcher)
     }
 
     fun search(query: String): Flow<List<DecryptedCipher>> {
         val accountId = session.activeAccountId ?: return flowOf(emptyList())
         return cipherDao.search(accountId, query).map { list ->
             list.mapNotNull { decryptCipher(it) }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(ioDispatcher)
     }
 
     fun observeById(id: String): Flow<DecryptedCipher?> =
-        cipherDao.observeById(id).map { it?.let { decryptCipher(it) } }.flowOn(Dispatchers.Default)
+        cipherDao.observeById(id)
+            .map { it?.let { e -> decryptCipher(e) } }
+            .flowOn(ioDispatcher)
 
     fun observeFolders(): Flow<List<DecryptedFolder>> {
         val accountId = session.activeAccountId ?: return flowOf(emptyList())
         return folderDao.observeAll(accountId).map { list ->
             list.mapNotNull { decryptFolder(it) }
-        }.flowOn(Dispatchers.Default)
+        }.flowOn(ioDispatcher)
     }
 
-    // ── Full sync ─────────────────────────────────────────────────────────────
+    /** One-shot fetch of all decrypted ciphers — used by Watchtower. */
+    suspend fun getAllDecryptedCiphers(accountId: String): List<DecryptedCipher> =
+        withContext(ioDispatcher) {
+            cipherDao.getAllLoginCiphers(accountId).mapNotNull { decryptCipher(it) } +
+            cipherDao.observeByType(accountId, CipherType.CARD.value).first().mapNotNull { decryptCipher(it) } +
+            cipherDao.observeByType(accountId, CipherType.SECURE_NOTE.value).first().mapNotNull { decryptCipher(it) } +
+            cipherDao.observeByType(accountId, CipherType.IDENTITY.value).first().mapNotNull { decryptCipher(it) }
+        }
 
-    suspend fun sync(accountId: String): Result<Unit> = withContext(Dispatchers.IO) {
+    // Full sync
+
+    suspend fun sync(accountId: String): Result<Unit> = withContext(ioDispatcher) {
+        val account = accountDao.getById(accountId)
+        if (account?.isLocal == true) return@withContext Result.success(Unit)
+
         runCatching {
             val response = vaultApi.sync()
-            val body     = response.body() ?: error("Empty sync response (${response.code()})")
+            val body     = response.body()
+                ?: error("Empty sync response (${response.code()}): ${response.errorBody()?.string()}")
 
-            // Store orgs for key lookup
+            // Update account premium status
+            accountDao.updatePremiumStatus(accountId, body.profile.premium)
+
+            // Organisations
             organizationDao.deleteAllForAccount(accountId)
             organizationDao.upsertAll(body.profile.organizations.map { org ->
                 OrganizationEntity(
@@ -120,122 +144,257 @@ class VaultRepository @Inject constructor(
         }
     }
 
-    // ── CRUD ──────────────────────────────────────────────────────────────────
+    // CRUD
 
     suspend fun createCipher(cipher: DecryptedCipher): Result<DecryptedCipher> =
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
+            val account = accountDao.getById(cipher.accountId)
+            val isLocal = account?.isLocal == true
+
             runCatching {
-                val request  = encryptCipherRequest(cipher)
-                val response = vaultApi.createCipher(request)
-                val body     = response.body() ?: error("Create cipher failed (${response.code()})")
-                val entity   = body.toEntity(cipher.accountId)
+                val entity = if (isLocal) {
+                    // Local-only: create a random UUID and current timestamp
+                    val now = java.time.Instant.now().toString()
+                    val request = encryptCipherRequest(cipher)
+                    CipherResponse(
+                        id = UUID.randomUUID().toString(),
+                        type = request.type,
+                        name = request.name,
+                        notes = request.notes,
+                        favorite = request.favorite,
+                        reprompt = request.reprompt,
+                        folderId = request.folderId,
+                        organizationId = request.organizationId,
+                        collectionIds = request.collectionIds,
+                        login = request.login?.let { l -> LoginResponse(username = l.username, password = l.password, totp = l.totp, uris = l.uris.map { u -> LoginUriResponse(uri = u.uri, match = u.match) }) },
+                        card = request.card?.let { c -> CardResponse(cardholderName = c.cardholderName, brand = c.brand, number = c.number, expMonth = c.expMonth, expYear = c.expYear, code = c.code) },
+                        identity = request.identity?.let { i -> IdentityResponse(firstName = i.firstName, lastName = i.lastName, email = i.email, phone = i.phone, address1 = i.address1, city = i.city, postalCode = i.postalCode, country = i.country) },
+                        revisionDate = now,
+                        creationDate = now,
+                    ).toEntity(cipher.accountId)
+                } else {
+                    val request  = encryptCipherRequest(cipher)
+                    val response = vaultApi.createCipher(request)
+                    val body     = response.body()
+                        ?: error("Create cipher failed (${response.code()})")
+                    body.toEntity(cipher.accountId)
+                }
                 cipherDao.upsert(entity)
                 decryptCipher(entity) ?: error("Failed to decrypt created cipher")
             }
         }
 
     suspend fun updateCipher(cipher: DecryptedCipher): Result<DecryptedCipher> =
-        withContext(Dispatchers.IO) {
+        withContext(ioDispatcher) {
+            val account = accountDao.getById(cipher.accountId)
+            val isLocal = account?.isLocal == true
+
             runCatching {
-                val request  = encryptCipherRequest(cipher)
-                val response = vaultApi.updateCipher(cipher.id, request)
-                val body     = response.body() ?: error("Update cipher failed (${response.code()})")
-                val entity   = body.toEntity(cipher.accountId)
+                val entity = if (isLocal) {
+                    val now = java.time.Instant.now().toString()
+                    val request = encryptCipherRequest(cipher)
+                    CipherResponse(
+                        id = cipher.id,
+                        type = request.type,
+                        name = request.name,
+                        notes = request.notes,
+                        favorite = request.favorite,
+                        reprompt = request.reprompt,
+                        folderId = request.folderId,
+                        organizationId = request.organizationId,
+                        collectionIds = request.collectionIds,
+                        login = request.login?.let { l -> LoginResponse(username = l.username, password = l.password, totp = l.totp, uris = l.uris.map { u -> LoginUriResponse(uri = u.uri, match = u.match) }) },
+                        card = request.card?.let { c -> CardResponse(cardholderName = c.cardholderName, brand = c.brand, number = c.number, expMonth = c.expMonth, expYear = c.expYear, code = c.code) },
+                        identity = request.identity?.let { i -> IdentityResponse(firstName = i.firstName, lastName = i.lastName, email = i.email, phone = i.phone, address1 = i.address1, city = i.city, postalCode = i.postalCode, country = i.country) },
+                        revisionDate = now,
+                        creationDate = cipher.creationDate,
+                    ).toEntity(cipher.accountId)
+                } else {
+                    val request  = encryptCipherRequest(cipher)
+                    val response = vaultApi.updateCipher(cipher.id, request)
+                    val body     = response.body()
+                        ?: error("Update cipher failed (${response.code()})")
+                    body.toEntity(cipher.accountId)
+                }
                 cipherDao.upsert(entity)
                 decryptCipher(entity) ?: error("Failed to decrypt updated cipher")
             }
         }
 
-    suspend fun deleteCipher(id: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun deleteCipher(id: String): Result<Unit> = withContext(ioDispatcher) {
+        val accountId = session.activeAccountId ?: return@withContext Result.failure(Exception("No active account"))
+        val account = accountDao.getById(accountId)
+        val isLocal = account?.isLocal == true
+
         runCatching {
-            vaultApi.softDeleteCipher(id)
+            if (!isLocal) vaultApi.softDeleteCipher(id)
             cipherDao.softDelete(id, java.time.Instant.now().toString())
         }
     }
 
-    suspend fun permanentlyDeleteCipher(id: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun permanentlyDeleteCipher(id: String): Result<Unit> = withContext(ioDispatcher) {
+        val accountId = session.activeAccountId ?: return@withContext Result.failure(Exception("No active account"))
+        val account = accountDao.getById(accountId)
+        val isLocal = account?.isLocal == true
+
         runCatching {
-            vaultApi.deleteCipher(id)
+            if (!isLocal) vaultApi.deleteCipher(id)
             cipherDao.hardDelete(id)
         }
     }
 
-    suspend fun restoreCipher(id: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun restoreCipher(id: String): Result<Unit> = withContext(ioDispatcher) {
+        val accountId = session.activeAccountId ?: return@withContext Result.failure(Exception("No active account"))
+        val account = accountDao.getById(accountId)
+        val isLocal = account?.isLocal == true
+
         runCatching {
-            vaultApi.restoreCipher(id)
+            if (!isLocal) vaultApi.restoreCipher(id)
             cipherDao.restore(id)
         }
     }
 
-    suspend fun toggleFavorite(id: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun toggleFavorite(id: String): Result<Unit> = withContext(ioDispatcher) {
+        val accountId = session.activeAccountId ?: return@withContext Result.failure(Exception("No active account"))
+        val account = accountDao.getById(accountId)
+        val isLocal = account?.isLocal == true
+
         runCatching {
-            vaultApi.toggleFavorite(id)
+            if (!isLocal) vaultApi.toggleFavorite(id)
             cipherDao.toggleFavorite(id)
         }
     }
 
-    // ── Folder CRUD ───────────────────────────────────────────────────────────
-
-    suspend fun createFolder(name: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun createFolder(name: String): Result<Unit> = withContext(ioDispatcher) {
         runCatching {
             val accountId = session.activeAccountId ?: error("No active account")
+            val account   = accountDao.getById(accountId)
+            val isLocal   = account?.isLocal == true
             val userKey   = session.getUserKey()
             val encName   = crypto.encryptString(name, userKey).encode()
-            val response  = vaultApi.createFolder(FolderRequest(name = encName))
-            val body      = response.body() ?: error("Create folder failed")
-            folderDao.upsert(body.toEntity(accountId))
+            
+            val entity = if (isLocal) {
+                FolderResponse(
+                    id = UUID.randomUUID().toString(),
+                    name = encName,
+                    revisionDate = java.time.Instant.now().toString()
+                ).toEntity(accountId)
+            } else {
+                val response  = vaultApi.createFolder(FolderRequest(name = encName))
+                val body      = response.body() ?: error("Create folder failed")
+                body.toEntity(accountId)
+            }
+            folderDao.upsert(entity)
         }
     }
 
-    suspend fun deleteFolder(id: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun deleteFolder(id: String): Result<Unit> = withContext(ioDispatcher) {
+        val accountId = session.activeAccountId ?: return@withContext Result.failure(Exception("No active account"))
+        val account = accountDao.getById(accountId)
+        val isLocal = account?.isLocal == true
+
         runCatching {
-            vaultApi.deleteFolder(id)
+            if (!isLocal) vaultApi.deleteFolder(id)
             folderDao.deleteById(id)
         }
     }
 
-    // ── Watchtower ────────────────────────────────────────────────────────────
-
-    suspend fun buildWatchtowerReport(accountId: String): WatchtowerReport =
-        withContext(Dispatchers.Default) {
-            val allLogins = cipherDao.getAllLoginCiphers(accountId)
-                .mapNotNull { decryptCipher(it) }
-                .filter { !it.isInTrash }
-
-            val passwords  = allLogins.mapNotNull { it.loginData?.password }.filter { it.isNotBlank() }
-            val pwCounts   = passwords.groupingBy { it }.eachCount()
-
-            val weakPasswords    = allLogins.filter { isWeakPassword(it.loginData?.password) }
-            val reusedPasswords  = allLogins.filter { (pwCounts[it.loginData?.password] ?: 0) > 1 }
-            val oldPasswords     = allLogins.filter { isOldPassword(it.loginData?.passwordRevisionDate, 365) }
-            val noTotp           = allLogins.filter { it.loginData?.totp.isNullOrBlank() }
-            val insecureUrls     = allLogins.filter { cipher ->
-                cipher.loginData?.uris?.any { it.uri?.startsWith("http://") == true } == true
-            }
-
-            val totalIssues = weakPasswords.size + reusedPasswords.size + (oldPasswords.size / 2)
-            val totalScore  = maxOf(0, 100 - (totalIssues * 5))
-
-            WatchtowerReport(
-                weakPasswords   = weakPasswords,
-                reusedPasswords = reusedPasswords,
-                oldPasswords    = oldPasswords,
-                noTotp          = noTotp,
-                insecureUrls    = insecureUrls,
-                totalScore      = totalScore,
-            )
+    suspend fun purgeTrash(): Result<Unit> = withContext(ioDispatcher) {
+        val accountId = session.activeAccountId ?: return@withContext Result.failure(Exception("No active account"))
+        runCatching {
+            cipherDao.purgeTrash(accountId)
         }
+    }
 
-    // ── Decrypt helpers ───────────────────────────────────────────────────────
+    suspend fun createSend(
+        name: String,
+        type: Int,
+        textContent: String?,
+        hidden: Boolean,
+        expirationDate: String?,
+        maxAccessCount: Int?,
+    ): Result<DecryptedSend> = withContext(ioDispatcher) {
+        val accountId = session.activeAccountId ?: return@withContext Result.failure(Exception("No active account"))
+        val account = accountDao.getById(accountId)
+        val isLocal = account?.isLocal == true
+
+        runCatching {
+            // Generate a random key for this Send (independent of vault key)
+            val sendKeyBytes = ByteArray(32).apply { java.util.Random().nextBytes(this) }
+            val sendKey = SymmetricKey(sendKeyBytes)
+            val sendKeyEnc = crypto.encryptString(sendKeyBytes.joinToString("") { "%02x".format(it) }, session.getUserKey()).encode()
+
+            val encryptedText = textContent?.let { crypto.encryptString(it, sendKey).encode() }
+
+            val entity = if (isLocal) {
+                val now = java.time.Instant.now().toString()
+                SendResponse(
+                    id = UUID.randomUUID().toString(),
+                    type = type,
+                    name = crypto.encryptString(name, session.getUserKey()).encode(),
+                    key = sendKeyEnc,
+                    maxAccessCount = maxAccessCount,
+                    accessCount = 0,
+                    expirationDate = expirationDate,
+                    deletionDate = expirationDate ?: now,
+                    disabled = false,
+                    text = if (type == 0) SendTextResponse(text = encryptedText, hidden = hidden) else null,
+                    revisionDate = now,
+                ).toEntity(accountId)
+            } else {
+                val request = SendRequest(
+                    type = type,
+                    name = crypto.encryptString(name, session.getUserKey()).encode(),
+                    key = sendKeyEnc,
+                    maxAccessCount = maxAccessCount,
+                    expirationDate = expirationDate,
+                    deletionDate = expirationDate,
+                    disabled = false,
+                    text = if (type == 0) SendTextRequest(text = encryptedText, hidden = hidden) else null,
+                )
+                val response = vaultApi.createSend(request)
+                val body = response.body() ?: error("Create send failed (${response.code()})")
+                body.toEntity(accountId)
+            }
+            sendDao.upsert(entity)
+            decryptSend(entity) ?: error("Failed to decrypt created send")
+        }
+    }
+
+    private fun decryptSend(entity: SendEntity): DecryptedSend? = runCatching {
+        val vaultKey = session.getUserKey()
+        val decSendKeyHex = crypto.decryptOrNull(entity.key, vaultKey) ?: return null
+        val sendKey = SymmetricKey(decSendKeyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+
+        val decName = crypto.decryptOrNull(entity.name, vaultKey) ?: entity.name
+        val decText = entity.textContent?.let { crypto.decryptOrNull(it, sendKey) }
+
+        DecryptedSend(
+            id = entity.id,
+            type = entity.type,
+            name = decName,
+            notes = entity.notes,
+            maxAccessCount = entity.maxAccessCount,
+            accessCount = entity.accessCount,
+            expirationDate = entity.expirationDate,
+            deletionDate = entity.deletionDate,
+            disabled = entity.disabled,
+            textContent = decText,
+            textHidden = entity.textHidden,
+            fileName = entity.fileName,
+            revisionDate = entity.revisionDate,
+        )
+    }.getOrNull()
+
+    // Decryption helpers
 
     private fun decryptCipher(entity: CipherEntity): DecryptedCipher? = runCatching {
-        val key = if (entity.organizationId != null) {
+        val key = if (entity.organizationId != null)
             session.getOrgKey(entity.organizationId) ?: session.getUserKey()
-        } else {
+        else
             session.getUserKey()
-        }
 
-        val decName  = crypto.decryptOrNull(entity.name, key)  ?: return null
+        val decName  = crypto.decryptOrNull(entity.name, key) ?: return null
         val decNotes = crypto.decryptOrNull(entity.notes, key)
         val type     = CipherType.fromInt(entity.type)
 
@@ -244,7 +403,7 @@ class VaultRepository @Inject constructor(
             password             = crypto.decryptOrNull(entity.loginPassword, key),
             passwordRevisionDate = entity.loginPasswordRevDate,
             totp                 = crypto.decryptOrNull(entity.loginTotp, key),
-            uris                 = parseUris(entity.loginUris, key),
+            uris                 = parseUrisFromJson(entity.loginUris, key),
             autofillOnPageLoad   = entity.loginAutofillOnPageLoad,
         ) else null
 
@@ -285,7 +444,7 @@ class VaultRepository @Inject constructor(
             accountId       = entity.accountId,
             organizationId  = entity.organizationId,
             folderId        = entity.folderId,
-            collectionIds   = entity.collectionIds?.split(",") ?: emptyList(),
+            collectionIds   = entity.collectionIds?.split(",")?.filter { it.isNotBlank() } ?: emptyList(),
             type            = type,
             name            = decName,
             notes           = decNotes,
@@ -308,50 +467,45 @@ class VaultRepository @Inject constructor(
         DecryptedFolder(id = entity.id, name = name, revisionDate = entity.revisionDate)
     }.getOrNull()
 
-    private fun parseUris(raw: String?, key: com.spectre.app.core.crypto.SymmetricKey): List<LoginUri> {
+    private fun parseUrisFromJson(raw: String?, key: SymmetricKey): List<LoginUri> {
         if (raw.isNullOrBlank()) return emptyList()
         return runCatching {
             json.parseToJsonElement(raw).jsonArray.map { element ->
                 val obj   = element.jsonObject
-                val uri   = obj["uri"]?.jsonPrimitive?.content?.let { crypto.decryptOrNull(it, key) }
-                val match = obj["match"]?.jsonPrimitive?.intOrNull
-                LoginUri(uri = uri, match = UriMatchType.fromInt(match))
+                val uriRaw = obj["uri"]?.jsonPrimitive?.contentOrNull
+                val match  = obj["match"]?.jsonPrimitive?.intOrNull
+                LoginUri(
+                    uri   = uriRaw?.let { crypto.decryptOrNull(it, key) } ?: uriRaw,
+                    match = UriMatchType.fromInt(match),
+                )
             }
         }.getOrDefault(emptyList())
     }
 
-    // ── Encrypt helpers ───────────────────────────────────────────────────────
+    // Encryption helpers
 
     private fun encryptCipherRequest(cipher: DecryptedCipher): CipherRequest {
-        val key = session.getUserKey()
+        val key    = session.getUserKey()
         fun enc(s: String?) = s?.let { crypto.encryptString(it, key).encode() }
 
-        val loginReq = cipher.loginData?.let { l ->
-            val urisJson = json.encodeToString(l.uris.map { u ->
-                buildJsonObject {
-                    put("uri", enc(u.uri)?.let { JsonPrimitive(it) } ?: JsonNull)
-                    put("match", u.match.value)
-                }
-            })
-            LoginRequest(
-                username = enc(l.username),
-                password = enc(l.password),
-                totp     = enc(l.totp),
-                uris     = l.uris.map { u -> LoginUriRequest(uri = enc(u.uri), match = u.match.value) },
-            )
-        }
-
         return CipherRequest(
-            type         = cipher.type.value,
-            name         = enc(cipher.name) ?: "",
-            notes        = enc(cipher.notes),
-            favorite     = cipher.favorite,
-            reprompt     = if (cipher.reprompt) 1 else 0,
-            folderId     = cipher.folderId,
+            type           = cipher.type.value,
+            name           = enc(cipher.name) ?: "",
+            notes          = enc(cipher.notes),
+            favorite       = cipher.favorite,
+            reprompt       = if (cipher.reprompt) 1 else 0,
+            folderId       = cipher.folderId,
             organizationId = cipher.organizationId,
             collectionIds  = cipher.collectionIds,
-            login        = loginReq,
-            card         = cipher.cardData?.let { c ->
+            login          = cipher.loginData?.let { l ->
+                LoginRequest(
+                    username = enc(l.username),
+                    password = enc(l.password),
+                    totp     = enc(l.totp),
+                    uris     = l.uris.map { u -> LoginUriRequest(uri = enc(u.uri), match = u.match.value) },
+                )
+            },
+            card = cipher.cardData?.let { c ->
                 CardRequest(
                     cardholderName = enc(c.cardholderName),
                     brand          = enc(c.brand),
@@ -377,8 +531,6 @@ class VaultRepository @Inject constructor(
         )
     }
 
-    // ── Password utilities ────────────────────────────────────────────────────
-
     private fun computePasswordStrength(password: String): PasswordStrength {
         if (password.length < 6) return PasswordStrength.VERY_WEAK
         var score = 0
@@ -387,90 +539,55 @@ class VaultRepository @Inject constructor(
         if (password.any { it.isUpperCase() } && password.any { it.isLowerCase() }) score++
         if (password.any { it.isDigit() }) score++
         if (password.any { !it.isLetterOrDigit() }) score++
-        return PasswordStrength.fromScore(minOf(score - 1, 4).coerceAtLeast(0))
-    }
-
-    private fun isWeakPassword(password: String?): Boolean {
-        if (password.isNullOrBlank()) return true
-        return computePasswordStrength(password).score <= 1
-    }
-
-    private fun isOldPassword(revisionDate: String?, daysThreshold: Int): Boolean {
-        if (revisionDate.isNullOrBlank()) return true
-        return runCatching {
-            val date = java.time.Instant.parse(revisionDate)
-            val now  = java.time.Instant.now()
-            java.time.Duration.between(date, now).toDays() > daysThreshold
-        }.getOrDefault(false)
+        return PasswordStrength.fromScore((score - 1).coerceAtLeast(0))
     }
 }
 
-// ── Entity mappers ────────────────────────────────────────────────────────────
+// Entity mappers
 
 private fun FolderResponse.toEntity(accountId: String) = FolderEntity(
-    id           = id,
-    accountId    = accountId,
-    name         = name,
-    revisionDate = revisionDate,
+    id = id, accountId = accountId, name = name, revisionDate = revisionDate,
 )
 
 private fun CollectionResponse.toEntity(accountId: String) = CollectionEntity(
-    id             = id,
-    accountId      = accountId,
-    organizationId = organizationId,
-    name           = name,
-    hidePasswords  = hidePasswords,
+    id = id, accountId = accountId, organizationId = organizationId,
+    name = name, hidePasswords = hidePasswords,
 )
 
 private fun SendResponse.toEntity(accountId: String) = SendEntity(
-    id             = id,
-    accountId      = accountId,
-    type           = type,
-    name           = name,
-    notes          = notes,
-    key            = key,
-    maxAccessCount = maxAccessCount,
-    accessCount    = accessCount,
-    expirationDate = expirationDate,
-    deletionDate   = deletionDate,
-    disabled       = disabled,
-    textContent    = text?.text,
-    textHidden     = text?.hidden ?: false,
-    fileId         = file?.id,
-    fileName       = file?.fileName,
-    fileSize       = file?.size,
-    revisionDate   = revisionDate,
+    id = id, accountId = accountId, type = type, name = name, notes = notes,
+    key = key, maxAccessCount = maxAccessCount, accessCount = accessCount,
+    expirationDate = expirationDate, deletionDate = deletionDate, disabled = disabled,
+    textContent = text?.text, textHidden = text?.hidden ?: false,
+    fileId = file?.id, fileName = file?.fileName, fileSize = file?.size,
+    revisionDate = revisionDate,
 )
 
 fun CipherResponse.toEntity(accountId: String) = CipherEntity(
-    id                   = id,
-    accountId            = accountId,
-    organizationId       = organizationId,
-    folderId             = folderId,
-    type                 = type,
-    name                 = name,
-    notes                = notes,
-    favorite             = favorite,
-    reprompt             = reprompt,
-    deletedDate          = deletedDate,
-    revisionDate         = revisionDate,
-    creationDate         = creationDate,
-    collectionIds        = if (collectionIds.isEmpty()) null else collectionIds.joinToString(","),
-    loginUsername        = login?.username,
-    loginPassword        = login?.password,
-    loginPasswordRevDate = login?.passwordRevisionDate,
-    loginTotp            = login?.totp,
-    loginUris            = login?.uris?.let { uris ->
-        kotlinx.serialization.json.Json.encodeToString(
-            kotlinx.serialization.json.JsonArray(
-                uris.map { u ->
-                    kotlinx.serialization.json.buildJsonObject {
-                        put("uri",   u.uri?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
-                        put("match", u.match?.let { kotlinx.serialization.json.JsonPrimitive(it) } ?: kotlinx.serialization.json.JsonNull)
-                    }
-                }
-            )
-        )
+    id                     = id,
+    accountId              = accountId,
+    organizationId         = organizationId,
+    folderId               = folderId,
+    type                   = type,
+    name                   = name,
+    notes                  = notes,
+    favorite               = favorite,
+    reprompt               = reprompt,
+    deletedDate            = deletedDate,
+    revisionDate           = revisionDate,
+    creationDate           = creationDate,
+    collectionIds          = collectionIds.joinToString(",").takeIf { it.isNotBlank() },
+    loginUsername          = login?.username,
+    loginPassword          = login?.password,
+    loginPasswordRevDate   = login?.passwordRevisionDate,
+    loginTotp              = login?.totp,
+    loginUris              = login?.uris?.let { uris ->
+        Json.encodeToString(JsonArray(uris.map { u ->
+            buildJsonObject {
+                put("uri",   u.uri?.let { JsonPrimitive(it) } ?: JsonNull)
+                put("match", u.match?.let { JsonPrimitive(it) } ?: JsonNull)
+            }
+        }))
     },
     loginAutofillOnPageLoad  = login?.autofillOnPageLoad,
     cardCardholderName       = card?.cardholderName,
@@ -497,7 +614,7 @@ fun CipherResponse.toEntity(accountId: String) = CipherEntity(
     identityUsername         = identity?.username,
     identityPassportNumber   = identity?.passportNumber,
     identityLicenseNumber    = identity?.licenseNumber,
-    fields                   = fields.takeIf { it.isNotEmpty() }?.let { kotlinx.serialization.json.Json.encodeToString(it) },
-    attachments              = attachments.takeIf { it.isNotEmpty() }?.let { kotlinx.serialization.json.Json.encodeToString(it) },
-    passwordHistory          = passwordHistory.takeIf { it.isNotEmpty() }?.let { kotlinx.serialization.json.Json.encodeToString(it) },
+    fields                   = fields.takeIf { it.isNotEmpty() }?.let { Json.encodeToString(it) },
+    attachments              = attachments.takeIf { it.isNotEmpty() }?.let { Json.encodeToString(it) },
+    passwordHistory          = passwordHistory.takeIf { it.isNotEmpty() }?.let { Json.encodeToString(it) },
 )

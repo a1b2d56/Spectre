@@ -2,10 +2,8 @@ package com.spectre.app.core.data.database.entities
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
-import androidx.room.TypeConverters
-import com.spectre.app.core.data.database.Converters
 
-// ── Account ───────────────────────────────────────────────────────────────────
+// Account
 
 @Entity(tableName = "accounts")
 data class AccountEntity(
@@ -26,12 +24,12 @@ data class AccountEntity(
     val premium: Boolean = false,
     val lastSync: Long = 0L,
     val isActive: Boolean = false,
+    val isLocal: Boolean = false,
 )
 
-// ── Vault Item (Cipher) ───────────────────────────────────────────────────────
+// Vault Item (Cipher)
 
 @Entity(tableName = "ciphers")
-@TypeConverters(Converters::class)
 data class CipherEntity(
     @PrimaryKey val id: String,
     val accountId: String,
@@ -89,7 +87,7 @@ data class CipherEntity(
     val localCreatedAt: Long = System.currentTimeMillis(),
 )
 
-// ── Folder ────────────────────────────────────────────────────────────────────
+// Folder
 
 @Entity(tableName = "folders")
 data class FolderEntity(
@@ -100,7 +98,7 @@ data class FolderEntity(
     val pendingSync: Boolean = false,
 )
 
-// ── Collection ────────────────────────────────────────────────────────────────
+// Collection
 
 @Entity(tableName = "collections")
 data class CollectionEntity(
@@ -111,7 +109,7 @@ data class CollectionEntity(
     val hidePasswords: Boolean = false,
 )
 
-// ── Organisation ─────────────────────────────────────────────────────────────
+// Organisation
 
 @Entity(tableName = "organizations")
 data class OrganizationEntity(
@@ -122,7 +120,7 @@ data class OrganizationEntity(
     val type: Int = 0,
 )
 
-// ── Send ──────────────────────────────────────────────────────────────────────
+// Send
 
 @Entity(tableName = "sends")
 data class SendEntity(
@@ -143,4 +141,24 @@ data class SendEntity(
     val fileName: String?,
     val fileSize: String?,
     val revisionDate: String,
+)
+
+// Generator History
+
+@Entity(tableName = "generator_history")
+data class GeneratorHistoryEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val password: String, // Encrypted
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+// Ignored Watchtower Items
+
+@Entity(tableName = "ignored_watchtower_items")
+data class IgnoredWatchtowerItemEntity(
+    @PrimaryKey val id: String, // format: "cipherId_issueType"
+    val accountId: String,
+    val cipherId: String,
+    val issueType: String, // "weak", "reused", "no_totp", "insecure_uri"
+    val timestamp: Long = System.currentTimeMillis()
 )

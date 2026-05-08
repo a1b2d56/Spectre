@@ -47,6 +47,20 @@
                 android:resource="@xml/autofill_service_config" />
         </service>
 
+        <!-- ── Credential Provider Service (Android 14+) ────────────────────── -->
+        <service
+            android:name=".autofill.SpectreCredentialProviderService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_CREDENTIAL_PROVIDER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.credentials.CredentialProviderService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.credentials.provider"
+                android:resource="@xml/credential_provider" />
+        </service>
+
         <!-- ── Background Sync Worker ────────────────────────────────────── -->
         <provider
             android:name="androidx.startup.InitializationProvider"

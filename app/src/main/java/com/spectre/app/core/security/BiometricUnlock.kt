@@ -27,12 +27,17 @@ sealed class BiometricResult {
 
 @Singleton
 class BiometricUnlock @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     companion object {
         private const val KEY_ALIAS = "spectre_biometric_key"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        private const val PREFS_NAME = "spectre_biometric_prefs"
+        private const val KEY_ENCRYPTED_DATA = "encrypted_master_pw"
+        private const val KEY_IV = "master_pw_iv"
     }
+
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun isAvailable(): Boolean {
         val manager = BiometricManager.from(context)
@@ -50,48 +55,47 @@ class BiometricUnlock @Inject constructor(
     }
 
     /**
-     * Encrypts [data] using a Keystore-backed AES key — returns the
-     * IV + ciphertext as Base64 to persist in EncryptedSharedPreferences.
-     * The decrypt cipher requires biometric confirmation.
+     * Checks if we have a stored encrypted master password.
      */
-    fun encryptForBiometric(data: ByteArray): Pair<String, String> {
-        val key    = getOrCreateKey()
-        val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
-        cipher.init(Cipher.ENCRYPT_MODE, key)
-        val iv         = Base64.encodeToString(cipher.iv, Base64.NO_WRAP)
-        val cipherText = Base64.encodeToString(cipher.doFinal(data), Base64.NO_WRAP)
-        return Pair(iv, cipherText)
+    fun hasStoredSecret(): Boolean {
+        return !prefs.getString(KEY_ENCRYPTED_DATA, null).isNullOrBlank() &&
+               !prefs.getString(KEY_IV, null).isNullOrBlank()
     }
 
     /**
-     * Shows the biometric prompt and — on success — decrypts [encryptedData]
-     * with [iv] using the Keystore key that requires biometric auth.
+     * Shows a biometric prompt to authorize ENCRYPTION of the master password.
      */
-    fun promptToDecrypt(
-        activity: FragmentActivity,
-        encryptedData: String,
-        iv: String,
+    fun promptToEncrypt(
+        activity: androidx.fragment.app.FragmentActivity,
+        masterPassword: String,
         onResult: (BiometricResult) -> Unit,
     ) {
-        if (!isEnrolled()) { onResult(BiometricResult.NotEnrolled); return }
-
-        val key    = getOrCreateKey()
+        val key = getOrCreateKey()
         val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            key,
-            IvParameterSpec(Base64.decode(iv, Base64.NO_WRAP))
-        )
+        cipher.init(Cipher.ENCRYPT_MODE, key)
 
         val cryptoObject = BiometricPrompt.CryptoObject(cipher)
         val executor     = ContextCompat.getMainExecutor(activity)
 
         val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                val decrypted = result.cryptoObject?.cipher?.doFinal(
-                    Base64.decode(encryptedData, Base64.NO_WRAP)
-                ) ?: ByteArray(0)
-                onResult(BiometricResult.Success(decrypted))
+                try {
+                    val encryptedBytes = result.cryptoObject?.cipher?.doFinal(
+                        masterPassword.toByteArray(Charsets.UTF_8)
+                    ) ?: throw Exception("Cipher failed")
+                    
+                    val iv         = Base64.encodeToString(result.cryptoObject?.cipher?.iv, Base64.NO_WRAP)
+                    val cipherText = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+
+                    prefs.edit()
+                        .putString(KEY_ENCRYPTED_DATA, cipherText)
+                        .putString(KEY_IV, iv)
+                        .apply()
+
+                    onResult(BiometricResult.Success(ByteArray(0))) // Success indicator
+                } catch (e: Exception) {
+                    onResult(BiometricResult.Error("Encryption failed: ${e.message}"))
+                }
             }
             override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                 if (errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
@@ -101,8 +105,74 @@ class BiometricUnlock @Inject constructor(
                     onResult(BiometricResult.Error(errString.toString()))
                 }
             }
-            override fun onAuthenticationFailed() {
-                // Don't call onResult here — user can retry
+        })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Verify Identity")
+            .setSubtitle("Confirm biometric to enable unlock")
+            .setNegativeButtonText("Cancel")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .build()
+
+        prompt.authenticate(promptInfo, cryptoObject)
+    }
+
+    fun clearSecret() {
+        prefs.edit().clear().apply()
+    }
+
+    /**
+     * Shows the biometric prompt and — on success — decrypts the stored secret.
+     */
+    fun promptToUnlock(
+        activity: androidx.fragment.app.FragmentActivity,
+        onResult: (BiometricResult) -> Unit,
+    ) {
+        val encryptedData = prefs.getString(KEY_ENCRYPTED_DATA, null)
+        val iv = prefs.getString(KEY_IV, null)
+
+        if (encryptedData.isNullOrBlank() || iv.isNullOrBlank()) {
+            onResult(BiometricResult.Error("No biometric data stored"))
+            return
+        }
+
+        val ivBytes = try { Base64.decode(iv, Base64.NO_WRAP) } catch (e: Exception) { null }
+        if (ivBytes == null || ivBytes.size != 16) {
+            onResult(BiometricResult.Error("Invalid IV stored"))
+            return
+        }
+
+        val key    = getOrCreateKey()
+        val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
+        
+        try {
+            cipher.init(Cipher.DECRYPT_MODE, key, IvParameterSpec(ivBytes))
+        } catch (e: Exception) {
+            onResult(BiometricResult.Error("Failed to init cipher: ${e.message}"))
+            return
+        }
+
+        val cryptoObject = BiometricPrompt.CryptoObject(cipher)
+        val executor     = ContextCompat.getMainExecutor(activity)
+
+        val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                try {
+                    val decrypted = result.cryptoObject?.cipher?.doFinal(
+                        Base64.decode(encryptedData, Base64.NO_WRAP)
+                    ) ?: ByteArray(0)
+                    onResult(BiometricResult.Success(decrypted))
+                } catch (e: Exception) {
+                    onResult(BiometricResult.Error("Decryption failed: ${e.message}"))
+                }
+            }
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                if (errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
+                    errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON) {
+                    onResult(BiometricResult.Cancelled)
+                } else {
+                    onResult(BiometricResult.Error(errString.toString()))
+                }
             }
         })
 
@@ -143,3 +213,4 @@ class BiometricUnlock @Inject constructor(
         return keyGen.generateKey()
     }
 }
+

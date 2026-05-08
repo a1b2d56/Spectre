@@ -5,44 +5,47 @@ import retrofit2.Response
 import retrofit2.http.*
 
 interface IdentityApi {
+
+    @POST("accounts/prelogin")
+    suspend fun preLogin(@Body request: PreLoginRequest): Response<PreLoginResponse>
+
     @POST("connect/token")
     @FormUrlEncoded
     suspend fun getToken(
-        @Field("grant_type")          grantType: String = "password",
+        @Header("Auth-Email")         authEmail: String,
+        @Header("device-type")        deviceTypeHeader: String = "14",
+        @Field("grant_type")          grantType: String        = "password",
         @Field("username")            username: String,
         @Field("password")            password: String,
-        @Field("scope")               scope: String = "api offline_access",
-        @Field("client_id")           clientId: String = "mobile",
-        @Field("device_type")         deviceType: Int = 0,
-        @Field("device_name")         deviceName: String = "Spectre for Bitwarden",
-        @Field("device_identifier")   deviceIdentifier: String,
-        @Field("two_factor_token")    twoFactorToken: String? = null,
-        @Field("two_factor_provider") twoFactorProvider: Int? = null,
-        @Field("two_factor_remember") twoFactorRemember: Boolean? = null,
+        @Field("scope")               scope: String            = "api offline_access",
+        @Field("client_id")           clientId: String         = "web",
+        @Field("deviceType")          deviceType: Int          = 14,
+        @Field("deviceName")          deviceName: String       = "android",
+        @Field("deviceIdentifier")    deviceIdentifier: String,
+        @Field("two_factor_token")    twoFactorToken: String?  = null,
+        @Field("two_factor_provider") twoFactorProvider: Int?  = null,
+        @Field("two_factor_remember") twoFactorRemember: Boolean = false,
     ): Response<TokenResponse>
 
     @POST("connect/token")
     @FormUrlEncoded
     suspend fun refreshToken(
-        @Field("grant_type")    grantType: String = "refresh_token",
-        @Field("client_id")     clientId: String = "mobile",
+        @Field("grant_type")    grantType: String    = "refresh_token",
+        @Field("client_id")     clientId: String     = "web",
         @Field("refresh_token") refreshToken: String,
     ): Response<TokenResponse>
-
-    @POST("accounts/prelogin")
-    suspend fun preLogin(@Body request: PreLoginRequest): Response<PreLoginResponse>
 }
 
 interface VaultApi {
 
-    // ── Account ──────────────────────────────────────────────────────────────
     @GET("accounts/revision-date")
     suspend fun getRevisionDate(): Response<Long>
 
     @GET("sync")
     suspend fun sync(): Response<SyncResponse>
 
-    // ── Ciphers ───────────────────────────────────────────────────────────────
+    // Ciphers
+
     @GET("ciphers")
     suspend fun getCiphers(): Response<List<CipherResponse>>
 
@@ -70,10 +73,8 @@ interface VaultApi {
     @PUT("ciphers/{id}/favorite")
     suspend fun toggleFavorite(@Path("id") id: String): Response<Unit>
 
-    @POST("ciphers/import")
-    suspend fun importCiphers(@Body body: Map<String, @JvmSuppressWildcards Any>): Response<Unit>
+    // Attachments
 
-    // ── Attachments ───────────────────────────────────────────────────────────
     @Multipart
     @POST("ciphers/{id}/attachment/v2")
     suspend fun createAttachment(
@@ -90,7 +91,8 @@ interface VaultApi {
         @Path("attachmentId") attachmentId: String,
     ): Response<Unit>
 
-    // ── Folders ───────────────────────────────────────────────────────────────
+    // Folders
+
     @GET("folders")
     suspend fun getFolders(): Response<List<FolderResponse>>
 
@@ -106,18 +108,13 @@ interface VaultApi {
     @DELETE("folders/{id}")
     suspend fun deleteFolder(@Path("id") id: String): Response<Unit>
 
-    // ── Sends ─────────────────────────────────────────────────────────────────
+    // Sends
+
     @GET("sends")
     suspend fun getSends(): Response<List<SendResponse>>
 
     @POST("sends")
-    suspend fun createSend(@Body body: Map<String, @JvmSuppressWildcards Any>): Response<SendResponse>
-
-    @PUT("sends/{id}")
-    suspend fun updateSend(
-        @Path("id") id: String,
-        @Body body: Map<String, @JvmSuppressWildcards Any>,
-    ): Response<SendResponse>
+    suspend fun createSend(@Body request: SendRequest): Response<SendResponse>
 
     @DELETE("sends/{id}")
     suspend fun deleteSend(@Path("id") id: String): Response<Unit>

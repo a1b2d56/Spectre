@@ -3,138 +3,116 @@ package com.spectre.app.navigation
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.automirrored.filled.*
+import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.*
 import androidx.navigation.compose.*
-import com.spectre.app.feature.auth.LoginScreen
-import com.spectre.app.feature.auth.UnlockScreen
-import com.spectre.app.feature.vault.VaultScreen
-import com.spectre.app.feature.vault.VaultDetailScreen
-import com.spectre.app.feature.vault.VaultEditScreen
-import com.spectre.app.feature.generator.GeneratorScreen
-import com.spectre.app.feature.watchtower.WatchtowerScreen
-import com.spectre.app.feature.settings.SettingsScreen
-import com.spectre.app.feature.send.SendScreen
+import com.spectre.app.feature.auth.*
+import com.spectre.app.feature.vault.*
+import com.spectre.app.core.navigation.Route
+import kotlinx.serialization.Serializable
 
-sealed class Screen(val route: String) {
-    // Auth
-    object Login   : Screen("login")
-    object Unlock  : Screen("unlock/{accountId}") {
-        fun createRoute(accountId: String) = "unlock/$accountId"
-    }
-
-    // Main tabs
-    object Vault      : Screen("vault")
-    object Generator  : Screen("generator")
-    object Watchtower : Screen("watchtower")
-    object Send       : Screen("send")
-    object Settings   : Screen("settings")
-
-    // Vault detail/edit
-    object VaultDetail : Screen("vault/detail/{cipherId}") {
-        fun createRoute(cipherId: String) = "vault/detail/$cipherId"
-    }
-    object VaultEdit : Screen("vault/edit/{cipherId}?type={type}") {
-        fun createRoute(cipherId: String? = null, type: Int = 1) =
-            if (cipherId != null) "vault/edit/$cipherId?type=$type"
-            else "vault/edit/new?type=$type"
-    }
-}
+// Navigation system is now type-safe using Route objects defined in core.navigation.Route
 
 data class BottomNavItem(
-    val screen: Screen,
+    val route: Route,
     val label: String,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 )
 
 val bottomNavItems = listOf(
-    BottomNavItem(Screen.Vault,      "Vault",      Icons.Filled.Lock,     Icons.Outlined.Lock),
-    BottomNavItem(Screen.Generator,  "Generator",  Icons.Filled.Casino,   Icons.Outlined.Casino),
-    BottomNavItem(Screen.Watchtower, "Watchtower", Icons.Filled.Shield,   Icons.Outlined.Shield),
-    BottomNavItem(Screen.Send,       "Send",       Icons.Filled.Send,     Icons.Outlined.Send),
-    BottomNavItem(Screen.Settings,   "Settings",   Icons.Filled.Settings, Icons.Outlined.Settings),
+    BottomNavItem(Route.Vault,      "Vault",      Icons.Filled.Lock,    Icons.Outlined.Lock),
+    BottomNavItem(Route.Generator,  "Generator",  Icons.Filled.Casino,  Icons.Outlined.Casino),
+    BottomNavItem(Route.Watchtower, "Watchtower", Icons.Filled.Shield,  Icons.Outlined.Shield),
+    BottomNavItem(Route.Send,       "Send",       Icons.AutoMirrored.Filled.Send, Icons.AutoMirrored.Outlined.Send),
+    BottomNavItem(Route.Settings,   "Settings",   Icons.Filled.Settings,Icons.Outlined.Settings),
 )
 
 @Composable
 fun SpectreNavGraph(
     navController: NavHostController,
-    startDestination: String,
+    startDestination: Route,
+    activeAccount: com.spectre.app.core.data.models.Account? = null
 ) {
-    NavHost(
-        navController    = navController,
-        startDestination = startDestination,
-    ) {
-        // ── Auth ──────────────────────────────────────────────────────────────
-        composable(Screen.Login.route) {
+    NavHost(navController = navController, startDestination = startDestination) {
+
+        composable<Route.CreateLocalVault> {
+            CreateLocalVaultScreen(
+                onVaultCreated = {
+                    navController.navigate(Route.Vault) {
+                        popUpTo(Route.CreateLocalVault) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable<Route.Auth> {
+            AddVaultScreen(
+                onBitwardenUs = { navController.navigate(Route.Login) },
+                onBitwardenEu = { navController.navigate(Route.Login) }, // Simplified for now
+                onSelfHosted  = { navController.navigate(Route.Login) },
+                onKeePass     = { navController.navigate(Route.KeePassLogin) },
+            )
+        }
+
+        composable<Route.Login> {
             LoginScreen(
+                serverLabel = "Bitwarden",
+                serverUrl   = "https://api.bitwarden.com",
+                identityUrl = "https://identity.bitwarden.com",
+                onBack      = { navController.popBackStack() },
                 onLoginSuccess = {
-                    navController.navigate(Screen.Vault.route) {
-                        popUpTo(Screen.Login.route) { inclusive = true }
+                    navController.navigate(Route.Vault) {
+                        popUpTo(Route.Auth) { inclusive = true }
                     }
-                }
+                },
             )
         }
 
-        composable(
-            route = Screen.Unlock.route,
-            arguments = listOf(navArgument("accountId") { type = NavType.StringType })
-        ) { backStackEntry ->
-            val accountId = backStackEntry.arguments?.getString("accountId") ?: return@composable
-            UnlockScreen(
-                accountId = accountId,
-                onUnlocked = {
-                    navController.navigate(Screen.Vault.route) {
-                        popUpTo(Screen.Unlock.route) { inclusive = true }
-                    }
-                }
-            )
-        }
-
-        // ── Main tabs ─────────────────────────────────────────────────────────
-        composable(Screen.Vault.route) {
-            VaultScreen(
-                onItemClick = { id -> navController.navigate(Screen.VaultDetail.createRoute(id)) },
-                onAddClick  = { type -> navController.navigate(Screen.VaultEdit.createRoute(type = type)) },
-            )
-        }
-
-        composable(Screen.Generator.route)  { GeneratorScreen() }
-        composable(Screen.Watchtower.route) {
-            WatchtowerScreen(
-                onItemClick = { id -> navController.navigate(Screen.VaultDetail.createRoute(id)) }
-            )
-        }
-        composable(Screen.Send.route)    { SendScreen() }
-        composable(Screen.Settings.route) { SettingsScreen() }
-
-        // ── Vault detail ──────────────────────────────────────────────────────
-        composable(
-            route = Screen.VaultDetail.route,
-            arguments = listOf(navArgument("cipherId") { type = NavType.StringType })
-        ) { backStackEntry ->
-            val cipherId = backStackEntry.arguments?.getString("cipherId") ?: return@composable
-            VaultDetailScreen(
-                cipherId  = cipherId,
-                onEdit    = { navController.navigate(Screen.VaultEdit.createRoute(cipherId)) },
+        composable<Route.KeePassLogin> {
+            KeePassLoginScreen(
                 onBack    = { navController.popBackStack() },
+                onUnlocked = { _ ->
+                    navController.navigate(Route.Vault) {
+                        popUpTo(Route.Auth) { inclusive = true }
+                    }
+                },
             )
         }
 
-        // ── Vault edit ────────────────────────────────────────────────────────
-        composable(
-            route = Screen.VaultEdit.route,
-            arguments = listOf(
-                navArgument("cipherId") { type = NavType.StringType; nullable = true; defaultValue = null },
-                navArgument("type") { type = NavType.IntType; defaultValue = 1 },
+        composable<Route.Unlock> { back ->
+            val unlock: Route.Unlock = back.toRoute()
+            UnlockScreen(
+                accountId = unlock.accountId, 
+                onUnlocked = {
+                    navController.navigate(Route.Vault) {
+                        popUpTo<Route.Unlock> { inclusive = true }
+                    }
+                },
             )
-        ) { backStackEntry ->
-            val cipherId = backStackEntry.arguments?.getString("cipherId")
-            val type     = backStackEntry.arguments?.getInt("type") ?: 1
+        }
+
+        composable<Route.Vault> {
+            com.spectre.app.feature.main.MainScreen(navController = navController, activeAccount = activeAccount)
+        }
+
+        composable<Route.VaultDetail> { back ->
+            val detail: Route.VaultDetail = back.toRoute()
+            VaultDetailScreen(
+                cipherId = detail.cipherId,
+                onEdit   = { navController.navigate(Route.VaultEdit(detail.cipherId)) },
+                onBack   = { navController.popBackStack() },
+            )
+        }
+
+        composable<Route.VaultEdit> { back ->
+            val edit: Route.VaultEdit = back.toRoute()
             VaultEditScreen(
-                cipherId = cipherId,
-                type     = type,
+                cipherId = edit.cipherId,
+                type     = edit.type,
                 onSaved  = { navController.popBackStack() },
                 onBack   = { navController.popBackStack() },
             )

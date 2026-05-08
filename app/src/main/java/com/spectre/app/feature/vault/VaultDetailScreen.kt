@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
@@ -17,8 +18,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+
 import androidx.lifecycle.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.spectre.app.core.crypto.TotpEngine
 import com.spectre.app.core.data.models.*
@@ -31,13 +34,14 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import javax.inject.Inject
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
-
+/**
+ * ViewModel for viewing detailed information about a vault item.
+ */
 @HiltViewModel
 class VaultDetailViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val totpEngine: TotpEngine,
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -106,10 +110,33 @@ class VaultDetailViewModel @Inject constructor(
     fun restore() {
         viewModelScope.launch { vaultRepository.restoreCipher(cipherId) }
     }
+
+    fun downloadAttachment(attachment: CipherAttachment) {
+        val url = attachment.url ?: return
+        viewModelScope.launch {
+            try {
+                val request = android.app.DownloadManager.Request(android.net.Uri.parse(url))
+                    .setTitle(attachment.fileName ?: "Attachment")
+                    .setDescription("Downloading from Spectre vault")
+                    .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    .setDestinationInExternalPublicDir(
+                        android.os.Environment.DIRECTORY_DOWNLOADS,
+                        "Spectre/${attachment.fileName ?: attachment.id}"
+                    )
+
+                val dm = context.getSystemService(android.content.Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                dm.enqueue(request)
+                _snackbar.emit("Downloading ${attachment.fileName ?: "attachment"}…")
+            } catch (e: Exception) {
+                _snackbar.emit("Download failed: ${e.message}")
+            }
+        }
+    }
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
-
+/**
+ * Detailed view of a single vault item with copy-to-clipboard actions.
+ */
 @Composable
 fun VaultDetailScreen(
     cipherId: String,
@@ -117,8 +144,8 @@ fun VaultDetailScreen(
     onBack: () -> Unit,
     vm: VaultDetailViewModel = hiltViewModel(),
 ) {
-    val cipher  by vm.cipher.collectAsState()
-    val totp    by vm.totp.collectAsState()
+    val cipher  by vm.cipher.collectAsStateWithLifecycle()
+    val totp    by vm.totp.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -155,10 +182,10 @@ fun VaultDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // ── Header card ───────────────────────────────────────────────────
+            // Header card
             ItemHeaderCard(cipher = c)
 
-            // ── Trash banner ──────────────────────────────────────────────────
+            // Trash banner
             if (c.isInTrash) {
                 Surface(
                     color  = MaterialTheme.colorScheme.errorContainer,
@@ -181,7 +208,7 @@ fun VaultDetailScreen(
                 }
             }
 
-            // ── TOTP card ─────────────────────────────────────────────────────
+            // TOTP card
             totp?.let { t ->
                 SpectreCard {
                     SectionHeader(title = "Authenticator code", modifier = Modifier.padding(0.dp))
@@ -196,7 +223,7 @@ fun VaultDetailScreen(
                 }
             }
 
-            // ── Type-specific fields ──────────────────────────────────────────
+            // Type-specific fields
             when (c.type) {
                 CipherType.LOGIN    -> LoginDetailCard(c, totp, vm::copyToClipboard)
                 CipherType.CARD     -> CardDetailCard(c, vm::copyToClipboard)
@@ -204,7 +231,7 @@ fun VaultDetailScreen(
                 CipherType.SECURE_NOTE -> Unit
             }
 
-            // ── Notes ─────────────────────────────────────────────────────────
+            // Notes
             c.notes?.takeIf { it.isNotBlank() }?.let { notes ->
                 SpectreCard {
                     SectionHeader(title = "Notes", modifier = Modifier.padding(0.dp))
@@ -213,7 +240,7 @@ fun VaultDetailScreen(
                 }
             }
 
-            // ── Custom fields ─────────────────────────────────────────────────
+            // Custom fields
             if (c.fields.isNotEmpty()) {
                 SpectreCard {
                     SectionHeader(title = "Custom Fields", modifier = Modifier.padding(0.dp))
@@ -231,12 +258,12 @@ fun VaultDetailScreen(
                 }
             }
 
-            // ── Password history ──────────────────────────────────────────────
+            // Password history
             if (c.passwordHistory.isNotEmpty()) {
                 PasswordHistoryCard(history = c.passwordHistory, onCopy = { vm.copyToClipboard("Password", it) })
             }
 
-            // ── Attachments ───────────────────────────────────────────────────
+            // Attachments
             if (c.attachments.isNotEmpty()) {
                 SpectreCard {
                     SectionHeader(title = "Attachments (${c.attachments.size})", modifier = Modifier.padding(0.dp))
@@ -251,7 +278,7 @@ fun VaultDetailScreen(
                                 Text(att.fileName ?: "Attachment", style = MaterialTheme.typography.bodyMedium)
                                 att.size?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
-                            IconButton(onClick = { /* download */ }) {
+                            IconButton(onClick = { vm.downloadAttachment(att) }) {
                                 Icon(Icons.Filled.Download, "Download")
                             }
                         }
@@ -260,7 +287,7 @@ fun VaultDetailScreen(
                 }
             }
 
-            // ── Metadata ──────────────────────────────────────────────────────
+            // Metadata
             MetadataCard(cipher = c)
 
             Spacer(Modifier.height(24.dp))
@@ -268,7 +295,7 @@ fun VaultDetailScreen(
     }
 }
 
-// ── Sub-composables ───────────────────────────────────────────────────────────
+// Sub-composables
 
 @Composable
 private fun DetailTopBar(
@@ -282,7 +309,7 @@ private fun DetailTopBar(
     TopAppBar(
         title = { Text(cipher?.name ?: "", maxLines = 1) },
         navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back") }
+            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         },
         actions = {
             cipher?.let { c ->
@@ -314,7 +341,7 @@ private fun DetailTopBar(
 private fun ItemHeaderCard(cipher: DecryptedCipher) {
     val (icon, tint) = when (cipher.type) {
         CipherType.LOGIN       -> Icons.Filled.Key to MaterialTheme.colorScheme.primary
-        CipherType.SECURE_NOTE -> Icons.Filled.StickyNote2 to MaterialTheme.colorScheme.secondary
+        CipherType.SECURE_NOTE -> Icons.AutoMirrored.Filled.StickyNote2 to MaterialTheme.colorScheme.secondary
         CipherType.CARD        -> Icons.Filled.CreditCard to Color(0xFF22D3EE)
         CipherType.IDENTITY    -> Icons.Filled.Person to Color(0xFF4ADE80)
     }
@@ -451,3 +478,5 @@ private fun MetaRow(label: String, value: String) {
         Text(value, style = MaterialTheme.typography.bodySmall)
     }
 }
+
+

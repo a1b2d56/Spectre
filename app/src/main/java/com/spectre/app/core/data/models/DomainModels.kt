@@ -2,8 +2,9 @@ package com.spectre.app.core.data.models
 
 import android.os.Parcelable
 import kotlinx.parcelize.Parcelize
+import kotlinx.serialization.Serializable
 
-// ── Cipher (decrypted vault item) ─────────────────────────────────────────────
+// Cipher (decrypted vault item)
 
 enum class CipherType(val value: Int) {
     LOGIN(1), SECURE_NOTE(2), CARD(3), IDENTITY(4);
@@ -15,54 +16,59 @@ enum class UriMatchType(val value: Int) {
     companion object { fun fromInt(v: Int?) = entries.firstOrNull { it.value == v } ?: DOMAIN }
 }
 
+@Serializable
 @Parcelize
 data class LoginUri(
     val uri: String?,
     val match: UriMatchType = UriMatchType.DOMAIN,
 ) : Parcelable
 
+@Serializable
 @Parcelize
 data class LoginData(
-    val username: String?,
-    val password: String?,
-    val passwordRevisionDate: String?,
-    val totp: String?,
+    val username: String? = null,
+    val password: String? = null,
+    val passwordRevisionDate: String? = null,
+    val totp: String? = null,
     val uris: List<LoginUri> = emptyList(),
     val autofillOnPageLoad: Boolean? = null,
 ) : Parcelable
 
+@Serializable
 @Parcelize
 data class CardData(
-    val cardholderName: String?,
-    val brand: String?,
-    val number: String?,
-    val expMonth: String?,
-    val expYear: String?,
-    val code: String?,
+    val cardholderName: String? = null,
+    val brand: String? = null,
+    val number: String? = null,
+    val expMonth: String? = null,
+    val expYear: String? = null,
+    val code: String? = null,
 ) : Parcelable
 
+@Serializable
 @Parcelize
 data class IdentityData(
-    val title: String?,
-    val firstName: String?,
-    val middleName: String?,
-    val lastName: String?,
-    val address1: String?,
-    val address2: String?,
-    val address3: String?,
-    val city: String?,
-    val state: String?,
-    val postalCode: String?,
-    val country: String?,
-    val company: String?,
-    val email: String?,
-    val phone: String?,
-    val ssn: String?,
-    val username: String?,
-    val passportNumber: String?,
-    val licenseNumber: String?,
+    val title: String? = null,
+    val firstName: String? = null,
+    val middleName: String? = null,
+    val lastName: String? = null,
+    val address1: String? = null,
+    val address2: String? = null,
+    val address3: String? = null,
+    val city: String? = null,
+    val state: String? = null,
+    val postalCode: String? = null,
+    val country: String? = null,
+    val company: String? = null,
+    val email: String? = null,
+    val phone: String? = null,
+    val ssn: String? = null,
+    val username: String? = null,
+    val passportNumber: String? = null,
+    val licenseNumber: String? = null,
 ) : Parcelable
 
+@Serializable
 @Parcelize
 data class CipherField(
     val type: Int,
@@ -71,6 +77,7 @@ data class CipherField(
     val linkedId: Int? = null,
 ) : Parcelable
 
+@Serializable
 @Parcelize
 data class CipherAttachment(
     val id: String,
@@ -79,12 +86,14 @@ data class CipherAttachment(
     val size: String?,
 ) : Parcelable
 
+@Serializable
 @Parcelize
 data class PasswordHistoryEntry(
     val password: String,
     val lastUsedDate: String,
 ) : Parcelable
 
+@Serializable
 @Parcelize
 data class DecryptedCipher(
     val id: String,
@@ -106,9 +115,12 @@ data class DecryptedCipher(
     val fields: List<CipherField> = emptyList(),
     val attachments: List<CipherAttachment> = emptyList(),
     val passwordHistory: List<PasswordHistoryEntry> = emptyList(),
-    // Computed / local
+    // Computed / local (ignored in JSON export)
+    @kotlinx.serialization.Transient
     val passwordStrength: PasswordStrength? = null,
+    @kotlinx.serialization.Transient
     val isBreached: Boolean = false,
+    @kotlinx.serialization.Transient
     val localFaviconUri: String? = null,
 ) : Parcelable {
     val primaryUsername: String?
@@ -135,7 +147,7 @@ data class DecryptedCipher(
     val isInTrash: Boolean get() = deletedDate != null
 }
 
-// ── Password strength ─────────────────────────────────────────────────────────
+// Password strength
 
 enum class PasswordStrength(val score: Int, val label: String) {
     VERY_WEAK(0, "Very weak"),
@@ -149,7 +161,7 @@ enum class PasswordStrength(val score: Int, val label: String) {
     }
 }
 
-// ── Folder ────────────────────────────────────────────────────────────────────
+// Folder
 
 data class DecryptedFolder(
     val id: String,
@@ -157,7 +169,7 @@ data class DecryptedFolder(
     val revisionDate: String,
 )
 
-// ── Send ──────────────────────────────────────────────────────────────────────
+// Send
 
 data class DecryptedSend(
     val id: String,
@@ -175,7 +187,7 @@ data class DecryptedSend(
     val revisionDate: String,
 )
 
-// ── Watchtower ────────────────────────────────────────────────────────────────
+// Watchtower
 
 data class WatchtowerReport(
     val weakPasswords: List<DecryptedCipher>   = emptyList(),
@@ -188,7 +200,7 @@ data class WatchtowerReport(
     val totalScore: Int                        = 100,
 )
 
-// ── Account ───────────────────────────────────────────────────────────────────
+// Account
 
 data class Account(
     val id: String,
@@ -198,4 +210,6 @@ data class Account(
     val premium: Boolean,
     val lastSync: Long,
     val isActive: Boolean,
+    val isLocal: Boolean = false,
 )
+

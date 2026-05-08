@@ -6,6 +6,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
+import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
@@ -13,8 +15,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.*
 import androidx.compose.ui.unit.*
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+
 import androidx.lifecycle.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.spectre.app.core.data.models.*
 import com.spectre.app.core.data.repository.VaultRepository
@@ -26,7 +30,6 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 import javax.inject.Inject
 
-// ── ViewModel ─────────────────────────────────────────────────────────────────
 
 data class EditUiState(
     val id: String                  = "",
@@ -59,7 +62,6 @@ data class EditUiState(
     val idCity: String              = "",
     val idPostalCode: String        = "",
     val idCountry: String           = "",
-    // UI
     val isSaving: Boolean           = false,
     val isLoading: Boolean          = false,
     val error: String?              = null,
@@ -67,10 +69,15 @@ data class EditUiState(
     val generatedPassword: String?  = null,
 )
 
+/**
+ * ViewModel for adding or editing vault items.
+ */
 @HiltViewModel
 class VaultEditViewModel @Inject constructor(
     private val vaultRepository: VaultRepository,
     private val session: VaultSession,
+    private val passwordGenerator: com.spectre.app.feature.generator.PasswordGenerator,
+    private val prefs: com.spectre.app.core.data.datastore.SpectrePreferences,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -159,6 +166,21 @@ class VaultEditViewModel @Inject constructor(
         s.copy(loginUris = s.loginUris.toMutableList().also { if (it.size > 1) it.removeAt(index) })
     }
 
+    fun generatePassword() {
+        viewModelScope.launch {
+            val settings = prefs.settings.first()
+            val config = com.spectre.app.feature.generator.GeneratorConfig(
+                length = settings.defaultGeneratorLength,
+                useUppercase = settings.defaultGeneratorUppercase,
+                useLowercase = settings.defaultGeneratorLowercase,
+                useNumbers = settings.defaultGeneratorNumbers,
+                useSymbols = settings.defaultGeneratorSymbols,
+            )
+            val result = passwordGenerator.generate(config)
+            _state.update { it.copy(loginPassword = result.value, showPassword = true) }
+        }
+    }
+
     fun save() {
         val s = _state.value
         if (s.name.isBlank()) { _state.update { it.copy(error = "Name is required.") }; return }
@@ -224,8 +246,9 @@ class VaultEditViewModel @Inject constructor(
     }
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
-
+/**
+ * Screen for entering and saving vault item details.
+ */
 @Composable
 fun VaultEditScreen(
     cipherId: String?,
@@ -234,7 +257,7 @@ fun VaultEditScreen(
     onBack: () -> Unit,
     vm: VaultEditViewModel = hiltViewModel(),
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(Unit) { vm.saved.collect { onSaved() } }
 
@@ -243,7 +266,7 @@ fun VaultEditScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (state.isNew) "New ${state.type.name.lowercase().replaceFirstChar { it.uppercase() }}"
+                        if (state.isNew) "New ${state.type.name.lowercase().replace("_", " ").replaceFirstChar { it.uppercase() }}"
                         else "Edit Item",
                         fontWeight = FontWeight.Bold,
                     )
@@ -278,14 +301,19 @@ fun VaultEditScreen(
             } else {
                 // Common fields
                 EditCard {
-                    SpectreTextField("Name *", state.name, vm::onNameChange, leadingIcon = Icons.Filled.Label)
+                    SpectreTextField("Name *", state.name, vm::onNameChange, leadingIcon = Icons.AutoMirrored.Filled.Label)
+                    
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(state.favourite, { vm.onFavouriteToggle() })
-                        Text("Mark as favourite", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.width(16.dp))
-                        Checkbox(state.reprompt, { vm.onRepromptToggle() })
-                        Text("Re-prompt master password", style = MaterialTheme.typography.bodySmall)
+                    
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { vm.onFavouriteToggle() }.fillMaxWidth()) {
+                            Checkbox(state.favourite, { vm.onFavouriteToggle() })
+                            Text("Mark as favourite", style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { vm.onRepromptToggle() }.fillMaxWidth()) {
+                            Checkbox(state.reprompt, { vm.onRepromptToggle() })
+                            Text("Re-prompt master password", style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
                 }
 
@@ -303,7 +331,7 @@ fun VaultEditScreen(
                         label  = "Notes",
                         value  = state.notes,
                         onChange = vm::onNotesChange,
-                        leadingIcon = Icons.Filled.Notes,
+                        leadingIcon = Icons.AutoMirrored.Filled.Notes,
                         singleLine = false,
                         minLines   = 3,
                     )
@@ -337,7 +365,7 @@ private fun LoginEditSection(state: EditUiState, vm: VaultEditViewModel) {
                     IconButton(onClick = vm::onToggleShowPassword) {
                         Icon(if (state.showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null)
                     }
-                    IconButton(onClick = { /* open generator sheet */ }) {
+                    IconButton(onClick = { vm.generatePassword() }) {
                         Icon(Icons.Filled.Casino, "Generate")
                     }
                 }
@@ -457,3 +485,5 @@ private fun SpectreTextField(
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
     )
 }
+
+

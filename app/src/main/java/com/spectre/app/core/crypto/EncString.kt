@@ -1,6 +1,7 @@
 package com.spectre.app.core.crypto
 
 import android.util.Base64
+import com.spectre.app.core.utils.suspendRunCatching
 
 /**
  * Represents a Bitwarden EncString — the wire format for all encrypted vault data.
@@ -66,7 +67,7 @@ data class EncString(
 
         /** Returns null instead of throwing for optional fields. */
         fun parseOrNull(raw: String?): EncString? = raw?.let {
-            runCatching { parse(it) }.getOrNull()
+            suspendRunCatching { parse(it) }.getOrNull()
         }
     }
 
@@ -105,3 +106,4 @@ data class EncString(
         return result
     }
 }
+

@@ -3,6 +3,7 @@ package com.spectre.app.core.crypto
 import android.util.Base64
 import org.bouncycastle.crypto.generators.Argon2BytesGenerator
 import org.bouncycastle.crypto.params.Argon2Parameters
+import com.spectre.app.core.utils.suspendRunCatching
 import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -28,12 +29,14 @@ import javax.inject.Singleton
 @Singleton
 class BitwardenCrypto @Inject constructor() {
 
+    private val secureRandom = SecureRandom()
+
     companion object {
         private const val AES_CBC_PKCS5 = "AES/CBC/PKCS5Padding"
         private const val HMAC_SHA256   = "HmacSHA256"
     }
 
-    // ── Key Derivation ────────────────────────────────────────────────────────
+    // Key Derivation
 
     /**
      * Derives the master key from master password and email.
@@ -89,7 +92,7 @@ class BitwardenCrypto @Inject constructor() {
         return Base64.encodeToString(hash, Base64.NO_WRAP)
     }
 
-    // ── Symmetric Encryption / Decryption ─────────────────────────────────────
+    // Symmetric Encryption / Decryption
 
     /**
      * Decrypts a type-2 EncString (AES-CBC-256 + HMAC-SHA256) using [key].
@@ -113,14 +116,14 @@ class BitwardenCrypto @Inject constructor() {
     /** Decrypt or return null — safe for optional fields that may be absent. */
     fun decryptOrNull(raw: String?, key: SymmetricKey): String? {
         if (raw.isNullOrBlank()) return null
-        return runCatching { decryptToString(raw, key) }.getOrNull()
+        return suspendRunCatching { decryptToString(raw, key) }.getOrNull()
     }
 
     /**
      * Encrypts [plaintext] bytes with [key] → type-2 EncString (AES-CBC + HMAC).
      */
     fun encrypt(plaintext: ByteArray, key: SymmetricKey): EncString {
-        val iv         = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val iv         = ByteArray(16).also { secureRandom.nextBytes(it) }
         val cipherText = encryptAesCbc(iv, plaintext, key.encKey)
         val mac        = computeMac(iv, cipherText, key.macKey)
         return EncString(type = 2, iv = iv, cipherText = cipherText, mac = mac)
@@ -129,7 +132,7 @@ class BitwardenCrypto @Inject constructor() {
     fun encryptString(plaintext: String, key: SymmetricKey): EncString =
         encrypt(plaintext.toByteArray(Charsets.UTF_8), key)
 
-    // ── Protected Key Decryption ──────────────────────────────────────────────
+    // Protected Key Decryption
 
     /**
      * Decrypts the user's protected symmetric key received from the server
@@ -161,7 +164,7 @@ class BitwardenCrypto @Inject constructor() {
         return decrypt(encString, userKey)
     }
 
-    // ── Private Helpers ───────────────────────────────────────────────────────
+    // Private Helpers
 
     private fun pbkdf2HmacSha256(
         key: ByteArray,
@@ -169,14 +172,11 @@ class BitwardenCrypto @Inject constructor() {
         iterations: Int,
         outputLen: Int,
     ): ByteArray {
-        val spec = javax.crypto.spec.PBEKeySpec(
-            String(key, Charsets.ISO_8859_1).toCharArray(),
-            salt,
-            iterations,
-            outputLen * 8
+        val generator = org.bouncycastle.crypto.generators.PKCS5S2ParametersGenerator(
+            org.bouncycastle.crypto.digests.SHA256Digest()
         )
-        val factory = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        return factory.generateSecret(spec).encoded
+        generator.init(key, salt, iterations)
+        return (generator.generateDerivedParameters(outputLen * 8) as org.bouncycastle.crypto.params.KeyParameter).key
     }
 
     private fun argon2id(
@@ -277,3 +277,4 @@ class BitwardenCrypto @Inject constructor() {
         return cipher.doFinal(cipherText)
     }
 }
+

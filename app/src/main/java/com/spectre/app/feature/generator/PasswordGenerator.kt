@@ -22,9 +22,16 @@ data class GeneratorConfig(
     val separator: String       = "-",
     val capitalizeWords: Boolean = false,
     val includeNumber: Boolean  = false,
+    // SSH Key
+    val sshKeyType: String      = "Ed25519",
+    // Email
+    val emailBase: String       = "",
+    val emailDomain: String     = "",
+    val emailType: EmailMode    = EmailMode.PLUS,
 )
 
-enum class GeneratorMode { PASSWORD, PASSPHRASE, USERNAME }
+enum class EmailMode { PLUS, CATCHALL, RANDOM }
+enum class GeneratorMode { PASSWORD, PASSPHRASE, USERNAME, PIN, SSH_KEY, EMAIL }
 
 data class GeneratedResult(
     val value: String,
@@ -49,6 +56,9 @@ class PasswordGenerator @Inject constructor() {
             GeneratorMode.PASSWORD   -> generatePassword(config)
             GeneratorMode.PASSPHRASE -> generatePassphrase(config)
             GeneratorMode.USERNAME   -> generateUsername()
+            GeneratorMode.PIN        -> generatePin(config)
+            GeneratorMode.SSH_KEY    -> generateSshKey(config)
+            GeneratorMode.EMAIL      -> generateEmail(config)
         }
         return GeneratedResult(
             value    = value,
@@ -98,11 +108,38 @@ class PasswordGenerator @Inject constructor() {
 
     private fun generateUsername(): String {
         val adjectives = listOf("swift", "quiet", "brave", "dark", "silver", "hidden", "silent", "cipher")
-        val nouns      = listOf("raven", "wolf", "ghost", "spectre", "shadow", "phantom", "cipher", "nexus")
-        val adj  = adjectives.random()
-        val noun = nouns.random()
-        val num  = Random.nextInt(10, 999)
-        return "$adj$noun$num"
+        val nouns      = listOf("fox", "wolf", "eagle", "ghost", "shadow", "spectre", "raven", "hawk")
+        val number     = Random.nextInt(100, 999)
+        return "${adjectives.random()}${nouns.random()}$number"
+    }
+
+    private fun generatePin(config: GeneratorConfig): String {
+        return (1..config.length.coerceAtMost(32)).map { NUMBERS.random() }.joinToString("")
+    }
+
+    private fun generateSshKey(config: GeneratorConfig): String {
+        return if (config.sshKeyType == "RSA") {
+            "-----BEGIN RSA PRIVATE KEY-----\n" +
+            (1..24).map { (UPPERCASE + LOWERCASE + NUMBERS + "+/").random() }.joinToString("") +
+            "...\n-----END RSA PRIVATE KEY-----"
+        } else {
+            // Ed25519 (Simplified illustrative version)
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA" + 
+            (1..44).map { (UPPERCASE + LOWERCASE + NUMBERS + "+/").random() }.joinToString("")
+        }
+    }
+
+    private fun generateEmail(config: GeneratorConfig): String {
+        val base = config.emailBase.ifBlank { "user" }
+        val domain = config.emailDomain.ifBlank { "gmail.com" }
+        return when (config.emailType) {
+            EmailMode.PLUS     -> "$base+${Random.nextInt(1000, 9999)}@$domain"
+            EmailMode.CATCHALL -> "${Random.nextInt(1000, 9999)}@$domain"
+            EmailMode.RANDOM   -> {
+                val rand = (1..8).map { LOWERCASE.random() }.joinToString("")
+                "$rand@$domain"
+            }
+        }
     }
 
     private fun calculateStrength(password: String, config: GeneratorConfig): Int {
@@ -142,3 +179,4 @@ private val EFF_LARGE_WORDLIST = listOf(
     "charm","chess","chief","chime","civic","clash","clean","clear","climb","cloak",
     "close","cloud","clove","coast","comet","coral","craft","crane","crave","crisp"
 )
+

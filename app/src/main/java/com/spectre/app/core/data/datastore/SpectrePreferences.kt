@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.spectre.app.core.ui.theme.SpectreTheme
+import com.spectre.app.core.data.models.UriMatchType
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -42,6 +43,25 @@ data class SpectreSettings(
     val sortOrder: VaultSortOrder          = VaultSortOrder.NAME_ASC,
     val activeAccountId: String?           = null,
     val deviceId: String                   = "",
+    val watchtowerCheckHibp: Boolean       = true,
+    val watchtowerScanReused: Boolean      = true,
+    val watchtowerScanWeak: Boolean        = true,
+    val watchtowerScan2fa: Boolean         = true,
+    val panicPin: String?                  = null,
+    
+    // Advanced Autofill
+    val autofillCredentialProvider: Boolean = true,
+    val autofillInlineSuggestions: Boolean  = true,
+    val autofillManualSelection: Boolean    = true,
+    val autofillRespectDisabled: Boolean    = false,
+    val autofillAutoCopyOtp: Boolean        = true,
+    val autofillOtpNotificationDuration: Int = 30,
+    val autofillAutoSave: Boolean           = false,
+    val autofillAskToSave: Boolean          = true,
+    val autofillMatchDetection: UriMatchType = UriMatchType.DOMAIN,
+    val autofillBlacklist: Set<String>      = emptySet(),
+    val autofillPrivilegedApps: Set<String> = emptySet(),
+    val customServerUrl: String             = "",
 )
 
 enum class LockTimeout(val seconds: Int, val label: String) {
@@ -72,7 +92,7 @@ enum class VaultSortOrder(val label: String) {
 
 @Singleton
 class SpectrePreferences @Inject constructor(
-    @ApplicationContext private val context: Context,
+    @param:ApplicationContext private val context: Context,
 ) {
     private object Keys {
         val THEME                    = stringPreferencesKey("theme")
@@ -100,6 +120,24 @@ class SpectrePreferences @Inject constructor(
         val SORT_ORDER               = stringPreferencesKey("sort_order")
         val ACTIVE_ACCOUNT_ID        = stringPreferencesKey("active_account_id")
         val DEVICE_ID                = stringPreferencesKey("device_id")
+        val WT_HIBP                  = booleanPreferencesKey("wt_hibp")
+        val WT_REUSED                = booleanPreferencesKey("wt_reused")
+        val WT_WEAK                  = booleanPreferencesKey("wt_weak")
+        val WT_2FA                   = booleanPreferencesKey("wt_2fa")
+        val PANIC_PIN                = stringPreferencesKey("panic_pin")
+        
+        val AF_CRED_PROV             = booleanPreferencesKey("af_cred_prov")
+        val AF_INLINE                = booleanPreferencesKey("af_inline")
+        val AF_MANUAL                = booleanPreferencesKey("af_manual")
+        val AF_RESPECT_DISABLED      = booleanPreferencesKey("af_respect_disabled")
+        val AF_AUTO_COPY_OTP         = booleanPreferencesKey("af_auto_copy_otp")
+        val AF_OTP_NOTIF_DUR         = intPreferencesKey("af_otp_notif_dur")
+        val AF_AUTO_SAVE             = booleanPreferencesKey("af_auto_save")
+        val AF_ASK_SAVE              = booleanPreferencesKey("af_ask_save")
+        val AF_MATCH_DETECTION       = stringPreferencesKey("af_match_detection")
+        val AF_BLACKLIST             = stringSetPreferencesKey("af_blacklist")
+        val AF_PRIVILEGED_APPS       = stringSetPreferencesKey("af_privileged_apps")
+        val CUSTOM_SERVER_URL        = stringPreferencesKey("custom_server_url")
     }
 
     val settings: Flow<SpectreSettings> = context.dataStore.data
@@ -131,6 +169,24 @@ class SpectrePreferences @Inject constructor(
                 sortOrder              = runCatching { VaultSortOrder.valueOf(prefs[Keys.SORT_ORDER] ?: "") }.getOrDefault(VaultSortOrder.NAME_ASC),
                 activeAccountId        = prefs[Keys.ACTIVE_ACCOUNT_ID],
                 deviceId               = prefs[Keys.DEVICE_ID]                ?: "",
+                watchtowerCheckHibp    = prefs[Keys.WT_HIBP]                  ?: true,
+                watchtowerScanReused   = prefs[Keys.WT_REUSED]                ?: true,
+                watchtowerScanWeak     = prefs[Keys.WT_WEAK]                  ?: true,
+                watchtowerScan2fa      = prefs[Keys.WT_2FA]                   ?: true,
+                panicPin               = prefs[Keys.PANIC_PIN],
+                
+                autofillCredentialProvider = prefs[Keys.AF_CRED_PROV]         ?: true,
+                autofillInlineSuggestions  = prefs[Keys.AF_INLINE]            ?: true,
+                autofillManualSelection    = prefs[Keys.AF_MANUAL]            ?: true,
+                autofillRespectDisabled    = prefs[Keys.AF_RESPECT_DISABLED]    ?: false,
+                autofillAutoCopyOtp        = prefs[Keys.AF_AUTO_COPY_OTP]        ?: true,
+                autofillOtpNotificationDuration = prefs[Keys.AF_OTP_NOTIF_DUR] ?: 30,
+                autofillAutoSave           = prefs[Keys.AF_AUTO_SAVE]           ?: false,
+                autofillAskToSave          = prefs[Keys.AF_ASK_SAVE]            ?: true,
+                autofillMatchDetection     = runCatching<UriMatchType> { UriMatchType.valueOf(prefs[Keys.AF_MATCH_DETECTION] ?: "") }.getOrDefault(UriMatchType.DOMAIN),
+                autofillBlacklist          = prefs[Keys.AF_BLACKLIST]           ?: emptySet(),
+                autofillPrivilegedApps      = prefs[Keys.AF_PRIVILEGED_APPS]     ?: emptySet(),
+                customServerUrl            = prefs[Keys.CUSTOM_SERVER_URL]      ?: "",
             )
         }
 
@@ -157,7 +213,29 @@ class SpectrePreferences @Inject constructor(
     suspend fun setDuressEnabled(v: Boolean) = update { it[Keys.DURESS_ENABLED] = v }
     suspend fun setShowBottomNavLabels(v: Boolean) = update { it[Keys.SHOW_BOTTOM_NAV_LABELS] = v }
 
+    suspend fun setWtHibp(v: Boolean) = update { it[Keys.WT_HIBP] = v }
+    suspend fun setWtReused(v: Boolean) = update { it[Keys.WT_REUSED] = v }
+    suspend fun setWtWeak(v: Boolean) = update { it[Keys.WT_WEAK] = v }
+    suspend fun setWt2fa(v: Boolean) = update { it[Keys.WT_2FA] = v }
+    suspend fun setPanicPin(pin: String?) = update {
+        if (pin == null) it.remove(Keys.PANIC_PIN) else it[Keys.PANIC_PIN] = pin
+    }
+
+    suspend fun setAfCredentialProvider(v: Boolean) = update { it[Keys.AF_CRED_PROV] = v }
+    suspend fun setAfInline(v: Boolean)             = update { it[Keys.AF_INLINE] = v }
+    suspend fun setAfManual(v: Boolean)             = update { it[Keys.AF_MANUAL] = v }
+    suspend fun setAfRespectDisabled(v: Boolean)    = update { it[Keys.AF_RESPECT_DISABLED] = v }
+    suspend fun setAfAutoCopyOtp(v: Boolean)        = update { it[Keys.AF_AUTO_COPY_OTP] = v }
+    suspend fun setAfOtpNotifDur(d: Int)            = update { it[Keys.AF_OTP_NOTIF_DUR] = d }
+    suspend fun setAfAutoSave(v: Boolean)           = update { it[Keys.AF_AUTO_SAVE] = v }
+    suspend fun setAfAskSave(v: Boolean)            = update { it[Keys.AF_ASK_SAVE] = v }
+    suspend fun setAfMatchDetection(m: UriMatchType) = update { it[Keys.AF_MATCH_DETECTION] = m.toString() }
+    suspend fun setAfBlacklist(uris: Set<String>)   = update { it[Keys.AF_BLACKLIST] = uris }
+    suspend fun setAfPrivilegedApps(pkgs: Set<String>) = update { it[Keys.AF_PRIVILEGED_APPS] = pkgs }
+    suspend fun setCustomServerUrl(url: String) = update { it[Keys.CUSTOM_SERVER_URL] = url }
+
     private suspend fun update(transform: (MutablePreferences) -> Unit) {
         context.dataStore.edit(transform)
     }
 }
+

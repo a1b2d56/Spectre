@@ -4,8 +4,6 @@ import androidx.room.*
 import com.spectre.app.core.data.database.entities.*
 import kotlinx.coroutines.flow.Flow
 
-// ── Account DAO ───────────────────────────────────────────────────────────────
-
 @Dao
 interface AccountDao {
     @Query("SELECT * FROM accounts ORDER BY isActive DESC")
@@ -35,11 +33,15 @@ interface AccountDao {
     @Query("UPDATE accounts SET accessToken = :token, refreshToken = :refresh WHERE id = :id")
     suspend fun updateTokens(id: String, token: String, refresh: String?)
 
+    @Query("UPDATE accounts SET premium = :premium WHERE id = :id")
+    suspend fun updatePremiumStatus(id: String, premium: Boolean)
+
     @Query("DELETE FROM accounts WHERE id = :id")
     suspend fun deleteById(id: String)
-}
 
-// ── Cipher DAO ────────────────────────────────────────────────────────────────
+    @Query("DELETE FROM accounts")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface CipherDao {
@@ -68,8 +70,8 @@ interface CipherDao {
     fun observeNoFolder(accountId: String): Flow<List<CipherEntity>>
 
     @Query("""
-        SELECT * FROM ciphers 
-        WHERE accountId = :accountId 
+        SELECT * FROM ciphers
+        WHERE accountId = :accountId
         AND deletedDate IS NULL
         AND (
             name LIKE '%' || :query || '%' OR
@@ -85,7 +87,7 @@ interface CipherDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(ciphers: List<CipherEntity>)
 
-    @Query("UPDATE ciphers SET favorite = NOT favorite WHERE id = :id")
+    @Query("UPDATE ciphers SET favorite = CASE WHEN favorite = 1 THEN 0 ELSE 1 END WHERE id = :id")
     suspend fun toggleFavorite(id: String)
 
     @Query("UPDATE ciphers SET deletedDate = :date WHERE id = :id")
@@ -103,15 +105,18 @@ interface CipherDao {
     @Query("SELECT COUNT(*) FROM ciphers WHERE accountId = :accountId AND deletedDate IS NULL")
     suspend fun countAll(accountId: String): Int
 
-    // Watchtower queries (operate on encrypted data — matching happens after decrypt in repo layer)
     @Query("SELECT * FROM ciphers WHERE accountId = :accountId AND type = 1 AND deletedDate IS NULL")
     suspend fun getAllLoginCiphers(accountId: String): List<CipherEntity>
 
     @Query("SELECT * FROM ciphers WHERE accountId = :accountId AND pendingSync = 1")
     suspend fun getPendingSync(accountId: String): List<CipherEntity>
-}
 
-// ── Folder DAO ────────────────────────────────────────────────────────────────
+    @Query("DELETE FROM ciphers WHERE accountId = :accountId AND deletedDate IS NOT NULL")
+    suspend fun purgeTrash(accountId: String)
+
+    @Query("DELETE FROM ciphers")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface FolderDao {
@@ -135,9 +140,10 @@ interface FolderDao {
 
     @Query("DELETE FROM folders WHERE accountId = :accountId")
     suspend fun deleteAllForAccount(accountId: String)
-}
 
-// ── Collection DAO ────────────────────────────────────────────────────────────
+    @Query("DELETE FROM folders")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface CollectionDao {
@@ -149,14 +155,18 @@ interface CollectionDao {
 
     @Query("DELETE FROM collections WHERE accountId = :accountId")
     suspend fun deleteAllForAccount(accountId: String)
-}
 
-// ── Organization DAO ──────────────────────────────────────────────────────────
+    @Query("DELETE FROM collections")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface OrganizationDao {
     @Query("SELECT * FROM organizations WHERE accountId = :accountId")
     fun observeAll(accountId: String): Flow<List<OrganizationEntity>>
+
+    @Query("SELECT * FROM organizations WHERE accountId = :accountId")
+    suspend fun getAll(accountId: String): List<OrganizationEntity>
 
     @Query("SELECT * FROM organizations WHERE id = :id")
     suspend fun getById(id: String): OrganizationEntity?
@@ -166,14 +176,18 @@ interface OrganizationDao {
 
     @Query("DELETE FROM organizations WHERE accountId = :accountId")
     suspend fun deleteAllForAccount(accountId: String)
-}
 
-// ── Send DAO ──────────────────────────────────────────────────────────────────
+    @Query("DELETE FROM organizations")
+    suspend fun deleteAll()
+}
 
 @Dao
 interface SendDao {
     @Query("SELECT * FROM sends WHERE accountId = :accountId ORDER BY revisionDate DESC")
     fun observeAll(accountId: String): Flow<List<SendEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(send: SendEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(sends: List<SendEntity>)
@@ -183,4 +197,37 @@ interface SendDao {
 
     @Query("DELETE FROM sends WHERE accountId = :accountId")
     suspend fun deleteAllForAccount(accountId: String)
+
+    @Query("DELETE FROM sends")
+    suspend fun deleteAll()
+}
+
+@Dao
+interface GeneratorHistoryDao {
+    @Query("SELECT * FROM generator_history ORDER BY timestamp DESC LIMIT 50")
+    fun observeHistory(): Flow<List<GeneratorHistoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entry: GeneratorHistoryEntity)
+
+    @Query("DELETE FROM generator_history")
+    suspend fun clearAll()
+}
+
+@Dao
+interface IgnoredWatchtowerDao {
+    @Query("SELECT * FROM ignored_watchtower_items WHERE accountId = :accountId")
+    fun observeAll(accountId: String): Flow<List<IgnoredWatchtowerItemEntity>>
+    
+    @Query("SELECT * FROM ignored_watchtower_items WHERE accountId = :accountId")
+    suspend fun getAll(accountId: String): List<IgnoredWatchtowerItemEntity>
+    
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(item: IgnoredWatchtowerItemEntity)
+    
+    @Query("DELETE FROM ignored_watchtower_items WHERE accountId = :accountId AND cipherId = :cipherId AND issueType = :issueType")
+    suspend fun remove(accountId: String, cipherId: String, issueType: String)
+
+    @Query("DELETE FROM ignored_watchtower_items")
+    suspend fun deleteAll()
 }

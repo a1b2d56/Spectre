@@ -9,6 +9,7 @@ import org.bouncycastle.crypto.digests.SHA256Digest
 import org.bouncycastle.crypto.digests.SHA512Digest
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.pow
 
 data class TotpCode(
     val code: String,
@@ -32,21 +33,28 @@ class TotpEngine @Inject constructor() {
     /**
      * Parses an otpauth:// URI or a raw Base32 secret.
      */
-    fun parseUri(uri: String): TotpConfig? = runCatching {
-        if (uri.startsWith("otpauth://")) {
-            val parsed  = Uri.parse(uri)
-            val secret  = parsed.getQueryParameter("secret") ?: return@runCatching null
-            val algo    = parsed.getQueryParameter("algorithm") ?: "SHA1"
-            val digits  = parsed.getQueryParameter("digits")?.toIntOrNull() ?: 6
-            val period  = parsed.getQueryParameter("period")?.toIntOrNull() ?: 30
-            val issuer  = parsed.getQueryParameter("issuer")
-            val account = parsed.path?.trimStart('/')
-            TotpConfig(secret, algo, digits, period, issuer, account)
+    fun parseUri(uri: String): TotpConfig? {
+        val trimmed = uri.trim()
+        if (trimmed.startsWith("otpauth://", ignoreCase = true)) {
+            return runCatching {
+                val parsed  = Uri.parse(trimmed)
+                val secret  = parsed.getQueryParameter("secret") ?: return@runCatching null
+                val algo    = parsed.getQueryParameter("algorithm") ?: "SHA1"
+                val digits  = parsed.getQueryParameter("digits")?.toIntOrNull() ?: 6
+                val period  = parsed.getQueryParameter("period")?.toIntOrNull() ?: 30
+                val issuer  = parsed.getQueryParameter("issuer")
+                val account = parsed.path?.trimStart('/')
+                TotpConfig(secret, algo, digits, period, issuer, account)
+            }.getOrNull()
         } else {
             // Raw Base32 secret
-            TotpConfig(secret = uri.trim().replace(" ", "").uppercase())
+            val secret = trimmed.replace(" ", "").uppercase()
+            if (secret.all { it in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567" }) {
+                return TotpConfig(secret = secret)
+            }
         }
-    }.getOrNull()
+        return null
+    }
 
     /**
      * Generates the current TOTP code with timing metadata.
@@ -99,7 +107,7 @@ class TotpEngine @Inject constructor() {
                      ((hash[offset + 2].toInt() and 0xFF) shl 8) or
                       (hash[offset + 3].toInt() and 0xFF)
 
-        val otp = code % Math.pow(10.0, digits.toDouble()).toInt()
+        val otp = code % (10.0).pow(digits).toInt()
         return otp.toString().padStart(digits, '0')
     }
 
@@ -124,3 +132,4 @@ class TotpEngine @Inject constructor() {
         return result.toByteArray()
     }
 }
+

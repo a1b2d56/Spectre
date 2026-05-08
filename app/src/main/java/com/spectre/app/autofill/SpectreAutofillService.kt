@@ -4,29 +4,47 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.os.CancellationSignal
 import android.service.autofill.*
+import android.util.Size
 import android.view.autofill.AutofillId
-import android.view.autofill.AutofillValue
 import android.widget.RemoteViews
-import androidx.annotation.RequiresApi
+import android.widget.inline.InlinePresentationSpec
+import androidx.autofill.inline.v1.InlineSuggestionUi
 import com.spectre.app.MainActivity
 import com.spectre.app.R
+import com.spectre.app.core.data.models.CipherType
+import com.spectre.app.core.data.models.DecryptedCipher
+import com.spectre.app.core.data.models.LoginData
+import com.spectre.app.core.data.models.LoginUri
+import com.spectre.app.core.data.repository.VaultRepository
+import com.spectre.app.core.security.LockState
+import com.spectre.app.core.security.VaultSession
+import com.spectre.app.core.utils.suspendRunCatching
+import com.spectre.app.di.IoDispatcher
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 /**
- * Bitwarden-compatible Android AutofillService.
+ * Production Android AutofillService for Spectre.
  *
  * Flow:
- *  1. Android calls onFillRequest() when the user focuses a username/password field.
- *  2. We parse the AssistStructure to find credential-relevant fields.
- *  3. If the vault is unlocked, we match candidate ciphers against the app/domain.
- *  4. We build FillResponse with Dataset entries — tapping one fills the fields.
- *  5. If vault is locked, we present an authentication intent that unlocks first.
+ *  1. Android calls onFillRequest() when the user focuses a credential field.
+ *  2. We parse the AssistStructure to find username/password fields.
+ *  3. If vault is UNLOCKED → query matching ciphers → build and return FillResponse.
+ *  4. If vault is LOCKED → return an auth Dataset that launches MainActivity to unlock.
+ *  5. onSaveRequest() extracts typed credentials and prompts user to save to vault.
  */
 @AndroidEntryPoint
 class SpectreAutofillService : AutofillService() {
 
     @Inject lateinit var autofillParser: AutofillParser
+    @Inject lateinit var autofillHelper: AutofillHelper
+    @Inject lateinit var session: VaultSession
+    @Inject lateinit var vaultRepository: VaultRepository
+    @Inject @IoDispatcher lateinit var ioDispatcher: CoroutineDispatcher
+
+    private val serviceScope = CoroutineScope(SupervisorJob() + ioDispatcher)
 
     override fun onFillRequest(
         request: FillRequest,
@@ -39,10 +57,95 @@ class SpectreAutofillService : AutofillService() {
         val parsedStructure = autofillParser.parse(structure)
         if (parsedStructure.credentialFields.isEmpty()) { callback.onSuccess(null); return }
 
-        // If vault is locked — send auth intent
+        val job = serviceScope.launch {
+            try {
+                val response = if (session.isUnlocked) {
+                    buildUnlockedResponse(request, parsedStructure)
+                } else {
+                    buildLockedResponse(request, parsedStructure, structure)
+                }
+                callback.onSuccess(response)
+            } catch (e: Exception) {
+                callback.onSuccess(null)
+            }
+        }
+
+        cancellationSignal.setOnCancelListener { job.cancel() }
+    }
+
+    /**
+     * Vault is UNLOCKED — fetch ciphers, match against app/domain, return populated datasets.
+     */
+    private suspend fun buildUnlockedResponse(
+        request: FillRequest,
+        parsed: ParsedAutofillStructure,
+    ): FillResponse? {
+        val accountId = session.activeAccountId ?: return null
+
+        val allCiphers = vaultRepository.getAllDecryptedCiphers(accountId)
+        val matched = autofillHelper.findMatchingCiphers(
+            ciphers = allCiphers,
+            packageName = parsed.packageName,
+            webDomain = parsed.webDomain,
+        )
+
+        if (matched.isEmpty()) return buildFallbackResponse(request, parsed)
+
+        return autofillHelper.buildFillResponse(
+            matchedCiphers = matched,
+            parsedStructure = parsed,
+            packageName = packageName,
+        )
+    }
+
+    /**
+     * No matching ciphers found — show a "Search Spectre Vault" option that opens the app.
+     */
+    @Suppress("DEPRECATION")
+    private fun buildFallbackResponse(
+        request: FillRequest,
+        parsed: ParsedAutofillStructure,
+    ): FillResponse? {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            putExtra("autofill_request", true)
+            putExtra("autofill_search", true)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 1, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+
+        val presentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
+            setTextViewText(android.R.id.text1, "🔍 Search Spectre vault…")
+        }
+
+        @Suppress("DEPRECATION")
+        val builder = Dataset.Builder(presentation)
+        parsed.credentialFields.forEach { field ->
+            builder.setValue(field.autofillId, null, presentation)
+        }
+        builder.setAuthentication(pendingIntent.intentSender)
+
+        val responseBuilder = FillResponse.Builder()
+        suspendRunCatching { responseBuilder.addDataset(builder.build()) }
+
+        addSaveInfo(responseBuilder, parsed)
+        return suspendRunCatching { responseBuilder.build() }.getOrNull()
+    }
+
+    /**
+     * Vault is LOCKED — present an authentication dataset that opens the unlock screen.
+     */
+    @Suppress("DEPRECATION")
+    private fun buildLockedResponse(
+        request: FillRequest,
+        parsed: ParsedAutofillStructure,
+        structure: android.app.assist.AssistStructure,
+    ): FillResponse? {
         val authIntent = Intent(this, MainActivity::class.java).apply {
             putExtra("autofill_request", true)
-            putExtra("autofill_package", structure.activityComponent?.packageName)
+            putExtra("autofill_package", parsed.packageName)
+            putExtra("autofill_domain", parsed.webDomain)
         }
         val authPendingIntent = PendingIntent.getActivity(
             this, 0, authIntent,
@@ -50,97 +153,97 @@ class SpectreAutofillService : AutofillService() {
         )
 
         val responseBuilder = FillResponse.Builder()
+        val inlineRequest = request.inlineSuggestionsRequest
 
-        // Placeholder dataset that triggers unlock flow
         val unlockPresentation = RemoteViews(packageName, android.R.layout.simple_list_item_1).apply {
             setTextViewText(android.R.id.text1, "🔒 Unlock Spectre vault…")
         }
 
-        val unlockDataset = Dataset.Builder(unlockPresentation)
-            .also { builder ->
-                parsedStructure.credentialFields.forEach { field ->
-                    builder.setValue(field.autofillId, AutofillValue.forText(""))
-                }
-            }
-            .setAuthentication(authPendingIntent.intentSender)
-            .build()
+        val datasetBuilder = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R && inlineRequest != null) {
+            val specs = inlineRequest.inlinePresentationSpecs
+            val spec = specs.firstOrNull()
+                ?: InlinePresentationSpec.Builder(Size(100, 50), Size(400, 100)).build()
+            val attribution = PendingIntent.getActivity(
+                this, 0, Intent(), PendingIntent.FLAG_IMMUTABLE
+            )
+            val slice = InlineSuggestionUi.newContentBuilder(attribution)
+                .setTitle("Unlock Spectre")
+                .build()
+                .slice
+            val inlinePresentation = InlinePresentation(slice, spec, false)
+            Dataset.Builder().setInlinePresentation(inlinePresentation)
+        } else {
+            Dataset.Builder(unlockPresentation)
+        }
 
-        responseBuilder.addDataset(unlockDataset)
+        parsed.credentialFields.forEach { field ->
+            datasetBuilder.setValue(field.autofillId, null, unlockPresentation)
+        }
+        datasetBuilder.setAuthentication(authPendingIntent.intentSender)
 
-        val saveInfo = SaveInfo.Builder(
-            SaveInfo.SAVE_DATA_TYPE_USERNAME or SaveInfo.SAVE_DATA_TYPE_PASSWORD,
-            parsedStructure.credentialFields.map { it.autofillId }.toTypedArray()
-        ).build()
+        runCatching { responseBuilder.addDataset(datasetBuilder.build()) }
+        addSaveInfo(responseBuilder, parsed)
 
-        responseBuilder.setSaveInfo(saveInfo)
-        callback.onSuccess(responseBuilder.build())
+        return runCatching { responseBuilder.build() }.getOrNull()
     }
 
+    /**
+     * onSaveRequest — Android calls this when the user submits credentials in another app.
+     * We extract the username/password and launch Spectre to prompt saving.
+     */
     override fun onSaveRequest(request: SaveRequest, callback: SaveCallback) {
-        // Extract saved credentials and prompt user to save to vault
+        val structure = request.fillContexts.lastOrNull()?.structure
+        if (structure == null) { callback.onSuccess(); return }
+
+        val credentials = autofillHelper.extractSavedCredentials(structure)
+        if (credentials == null) { callback.onSuccess(); return }
+
+        // Launch the app with the extracted credentials to show a "Save to Vault?" prompt
+        val saveIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("autofill_save", true)
+            putExtra("save_username", credentials.username)
+            putExtra("save_password", credentials.password)
+            putExtra("save_domain", credentials.domain)
+            putExtra("save_package", credentials.packageName)
+        }
+
+        try {
+            startActivity(saveIntent)
+        } catch (_: Exception) {
+            // If we can't launch the activity, silently succeed
+        }
+
         callback.onSuccess()
     }
-}
 
-// ── Autofill field parser ─────────────────────────────────────────────────────
-
-data class AutofillField(
-    val autofillId: AutofillId,
-    val type: FieldType,
-)
-
-enum class FieldType { USERNAME, PASSWORD, EMAIL, UNKNOWN }
-
-data class ParsedAutofillStructure(
-    val credentialFields: List<AutofillField>,
-    val packageName: String?,
-    val webDomain: String?,
-)
-
-class AutofillParser @Inject constructor() {
-
-    fun parse(structure: android.app.assist.AssistStructure): ParsedAutofillStructure {
-        val fields   = mutableListOf<AutofillField>()
-        var domain: String? = null
-        var pkg: String?    = null
-
-        for (i in 0 until structure.windowNodeCount) {
-            val windowNode = structure.getWindowNodeAt(i)
-            parseNode(windowNode.rootViewNode, fields)
-            if (pkg == null) pkg = windowNode.title?.toString()
-        }
-
-        return ParsedAutofillStructure(fields, pkg, domain)
+    override fun onDestroy() {
+        super.onDestroy()
+        serviceScope.cancel()
     }
 
-    private fun parseNode(
-        node: android.app.assist.AssistStructure.ViewNode,
-        fields: MutableList<AutofillField>,
-    ) {
-        val autofillId   = node.autofillId ?: run {
-            for (i in 0 until node.childCount) parseNode(node.getChildAt(i), fields)
-            return
+    private fun addSaveInfo(builder: FillResponse.Builder, parsed: ParsedAutofillStructure) {
+        val usernameIds = parsed.credentialFields
+            .filter { it.type == FieldType.USERNAME }
+            .map { it.autofillId }
+        val passwordIds = parsed.credentialFields
+            .filter { it.type == FieldType.PASSWORD }
+            .map { it.autofillId }
+
+        val allIds = (usernameIds + passwordIds).toTypedArray()
+        if (allIds.isEmpty()) return
+
+        val saveType = when {
+            usernameIds.isNotEmpty() && passwordIds.isNotEmpty() ->
+                SaveInfo.SAVE_DATA_TYPE_USERNAME or SaveInfo.SAVE_DATA_TYPE_PASSWORD
+            passwordIds.isNotEmpty() -> SaveInfo.SAVE_DATA_TYPE_PASSWORD
+            else -> SaveInfo.SAVE_DATA_TYPE_USERNAME
         }
 
-        val hints = node.autofillHints?.toList() ?: emptyList()
-        val inputType = node.inputType
-        val type = when {
-            hints.any { it.contains("username", true) || it.contains("email", true) } ||
-            inputType and android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS != 0 -> FieldType.USERNAME
-
-            hints.any { it.contains("password", true) } ||
-            inputType and android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD != 0 ||
-            inputType and android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD != 0 -> FieldType.PASSWORD
-
-            else -> FieldType.UNKNOWN
-        }
-
-        if (type != FieldType.UNKNOWN) {
-            fields.add(AutofillField(autofillId, type))
-        }
-
-        for (i in 0 until node.childCount) {
-            parseNode(node.getChildAt(i), fields)
-        }
+        builder.setSaveInfo(
+            SaveInfo.Builder(saveType, allIds)
+                .setFlags(SaveInfo.FLAG_SAVE_ON_ALL_VIEWS_INVISIBLE)
+                .build()
+        )
     }
 }

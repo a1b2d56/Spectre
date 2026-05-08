@@ -12,9 +12,6 @@ enum class LockState { LOCKED, UNLOCKED, NO_ACCOUNT }
 /**
  * Holds all in-memory session state for the active account.
  * Keys NEVER touch disk — they live only here until the vault is locked.
- *
- * Locking the vault calls destroy() on all key material and clears
- * this session — forcing the user through biometric/PIN unlock again.
  */
 @Singleton
 class VaultSession @Inject constructor() {
@@ -22,14 +19,13 @@ class VaultSession @Inject constructor() {
     private val _lockState = MutableStateFlow(LockState.NO_ACCOUNT)
     val lockState: StateFlow<LockState> = _lockState.asStateFlow()
 
-    /** The active account's decrypted 64-byte user symmetric key. */
     private var _userKey: SymmetricKey? = null
-
-    /** Per-org keys: orgId → SymmetricKey */
     private val _orgKeys = mutableMapOf<String, SymmetricKey>()
 
-    /** Active account ID */
     var activeAccountId: String? = null
+        private set
+
+    var lastActivityTime: Long = System.currentTimeMillis()
         private set
 
     val isUnlocked: Boolean get() = _lockState.value == LockState.UNLOCKED
@@ -37,12 +33,10 @@ class VaultSession @Inject constructor() {
     fun getUserKey(): SymmetricKey =
         _userKey ?: error("Vault is locked — cannot access user key")
 
+    fun getUserKeyOrNull(): SymmetricKey? = _userKey
+
     fun getOrgKey(orgId: String): SymmetricKey? = _orgKeys[orgId]
 
-    /**
-     * Called after biometric/PIN unlock — stores decrypted keys in memory
-     * and transitions to UNLOCKED state.
-     */
     fun unlock(
         accountId: String,
         userKey: SymmetricKey,
@@ -53,12 +47,30 @@ class VaultSession @Inject constructor() {
         _orgKeys.clear()
         _orgKeys.putAll(orgKeys)
         _lockState.value = LockState.UNLOCKED
+        recordActivity()
     }
 
-    /**
-     * Locks the vault — wipes all key material from memory.
-     * Called on timeout, screen off, background, or explicit user lock.
-     */
+    fun recordActivity() {
+        lastActivityTime = System.currentTimeMillis()
+    }
+
+    fun checkTimeout(timeoutSeconds: Int) {
+        if (timeoutSeconds < 0) return // Never
+        if (_lockState.value != LockState.UNLOCKED) return
+        
+        val elapsed = (System.currentTimeMillis() - lastActivityTime) / 1000
+        if (elapsed >= timeoutSeconds) {
+            lock()
+        }
+    }
+
+    /** Merges in org keys loaded after a sync without re-locking. */
+    fun addOrgKeys(orgKeys: Map<String, SymmetricKey>) {
+        if (_lockState.value == LockState.UNLOCKED) {
+            _orgKeys.putAll(orgKeys)
+        }
+    }
+
     fun lock() {
         _userKey?.destroy()
         _userKey = null
@@ -67,9 +79,6 @@ class VaultSession @Inject constructor() {
         _lockState.value = if (activeAccountId != null) LockState.LOCKED else LockState.NO_ACCOUNT
     }
 
-    /**
-     * Full sign-out — clears everything including account ID.
-     */
     fun signOut() {
         lock()
         activeAccountId = null
@@ -77,7 +86,9 @@ class VaultSession @Inject constructor() {
     }
 
     fun setNoAccount() {
-        signOut()
+        if (_lockState.value == LockState.UNLOCKED) return
+        activeAccountId = null
+        _lockState.value = LockState.NO_ACCOUNT
     }
 
     fun setAccountExists() {

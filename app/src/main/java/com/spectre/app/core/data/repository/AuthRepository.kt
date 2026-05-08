@@ -1,25 +1,33 @@
 package com.spectre.app.core.data.repository
 
+import android.util.Base64
+import android.util.Log
 import com.spectre.app.core.crypto.BitwardenCrypto
+import com.spectre.app.core.crypto.EncString
 import com.spectre.app.core.crypto.SymmetricKey
 import com.spectre.app.core.data.database.dao.AccountDao
 import com.spectre.app.core.data.database.dao.OrganizationDao
 import com.spectre.app.core.data.database.entities.AccountEntity
+import com.spectre.app.core.data.datastore.SpectrePreferences
 import com.spectre.app.core.data.models.Account
 import com.spectre.app.core.network.IdentityApi
 import com.spectre.app.core.network.TokenStore
 import com.spectre.app.core.network.model.PreLoginRequest
 import com.spectre.app.core.security.VaultSession
-import kotlinx.coroutines.Dispatchers
+import com.spectre.app.di.IoDispatcher
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.coroutines.withContext
+import java.security.SecureRandom
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val TAG = "SpectreAuth"
 
 sealed class LoginResult {
     data class Success(val accountId: String) : LoginResult()
@@ -43,8 +51,11 @@ class AuthRepository @Inject constructor(
     private val session: VaultSession,
     private val tokenStore: TokenStore,
     private val crypto: BitwardenCrypto,
-    private val prefs: com.spectre.app.core.data.datastore.SpectrePreferences,
+    private val prefs: SpectrePreferences,
+    @param:IoDispatcher private val ioDispatcher: CoroutineDispatcher,
 ) {
+    private val secureRandom = SecureRandom()
+
 
     fun observeAccounts(): Flow<List<Account>> =
         accountDao.observeAll().map { list -> list.map { it.toDomain() } }
@@ -52,14 +63,86 @@ class AuthRepository @Inject constructor(
     fun observeActiveAccount(): Flow<Account?> =
         accountDao.observeActive().map { it?.toDomain() }
 
+    // Local Vault Creation
+
     /**
-     * Full login flow:
-     * 1. Pre-login to fetch KDF params
-     * 2. Derive master key + hash
-     * 3. Authenticate with Bitwarden Identity server
-     * 4. Decrypt user key + private key
-     * 5. Store account + tokens in DB
-     * 6. Unlock session in memory
+     * Creates a purely offline local vault. No network calls.
+     * Generates a random user key, encrypts it with the master password,
+     * and stores everything locally. The vault is immediately unlocked.
+     */
+    suspend fun createLocalVault(
+        vaultName: String,
+        masterPassword: String,
+    ): LoginResult = withContext(ioDispatcher) {
+        try {
+            val accountId = UUID.randomUUID().toString()
+            val email = "$vaultName@local"
+
+            // Derive keys from master password (using PBKDF2 with 600k iterations)
+            val masterKey = crypto.deriveMasterKey(
+                password       = masterPassword,
+                email          = email,
+                kdfType        = 0,
+                kdfIterations  = 600_000,
+            )
+            val stretchedKey = crypto.stretchMasterKey(masterKey)
+
+            // Generate a random 64-byte user symmetric key
+            val rawUserKey = ByteArray(64).also { secureRandom.nextBytes(it) }
+            val userKey = SymmetricKey(rawUserKey)
+
+            // Encrypt the user key with the stretched master key
+            val encryptedUserKey = crypto.encrypt(rawUserKey, stretchedKey)
+
+            // Clear active flag on other accounts
+            accountDao.clearActiveFlag()
+
+            // Store the local account
+            accountDao.upsert(AccountEntity(
+                id                  = accountId,
+                userId              = accountId,
+                email               = email,
+                name                = vaultName,
+                serverUrl           = "local",
+                identityUrl         = "local",
+                accessToken         = "",
+                refreshToken        = null,
+                encryptedKey        = encryptedUserKey.encode(),
+                encryptedPrivateKey = null,
+                kdf                 = 0,
+                kdfIterations       = 600_000,
+                kdfMemory           = null,
+                kdfParallelism      = null,
+                isActive            = true,
+                isLocal             = true,
+            ))
+            prefs.setActiveAccountId(accountId)
+
+            // Unlock the session immediately
+            session.unlock(accountId, userKey)
+
+            // Wipe sensitive bytes
+            masterKey.fill(0)
+            rawUserKey.fill(0)
+
+            LoginResult.Success(accountId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to create local vault", e)
+            LoginResult.Error("Failed to create vault: ${e.message}")
+        }
+    }
+
+    // Bitwarden Login
+
+    /**
+     * Full Bitwarden login flow:
+     * 1. Set TokenStore URLs for DynamicUrlInterceptor
+     * 2. Pre-login to fetch KDF params
+     * 3. Derive master key + hash
+     * 4. Authenticate with Bitwarden Identity server
+     * 5. Decrypt user key + handle org keys
+     * 6. Store account + tokens in DB
+     * 7. Unlock session in memory
      */
     suspend fun login(
         email: String,
@@ -68,78 +151,114 @@ class AuthRepository @Inject constructor(
         identityUrl: String      = "https://identity.bitwarden.com",
         twoFactorToken: String?  = null,
         twoFactorProvider: Int?  = null,
-    ): LoginResult = withContext(Dispatchers.IO) {
-
+    ): LoginResult = withContext(ioDispatcher) {
         try {
-            // Configure endpoints for self-hosted support
+            val normalizedEmail = email.trim().lowercase()
+            Log.d(TAG, "Login attempt for $normalizedEmail → $identityUrl")
+
+            // Step 1: Configure URLs BEFORE any network call
             tokenStore.serverUrl   = serverUrl
             tokenStore.identityUrl = identityUrl
 
-            // 1. Fetch KDF params
-            val preLoginResponse = identityApi.preLogin(PreLoginRequest(email = email))
+            // Step 2: Fetch KDF params
+            val preLoginResponse = identityApi.preLogin(PreLoginRequest(email = normalizedEmail))
+            if (!preLoginResponse.isSuccessful) {
+                val errBody = preLoginResponse.errorBody()?.string() ?: ""
+                Log.e(TAG, "Pre-login failed: ${preLoginResponse.code()} $errBody")
+                return@withContext LoginResult.Error(
+                    "Could not reach server. Check your internet connection."
+                )
+            }
             val preLogin = preLoginResponse.body()
-                ?: return@withContext LoginResult.Error("Pre-login failed: ${preLoginResponse.code()}")
+                ?: return@withContext LoginResult.Error("Empty pre-login response")
 
-            // 2. Derive keys
+            Log.d(TAG, "KDF: type=${preLogin.kdf}, iterations=${preLogin.kdfIterations}")
+
+            // Step 3: Derive keys
             val masterKey = crypto.deriveMasterKey(
-                password        = masterPassword,
-                email           = email,
-                kdfType         = preLogin.kdf,
-                kdfIterations   = preLogin.kdfIterations,
-                kdfMemory       = preLogin.kdfMemory ?: 65_536,
-                kdfParallelism  = preLogin.kdfParallelism ?: 4,
+                password       = masterPassword,
+                email          = normalizedEmail,
+                kdfType        = preLogin.kdf,
+                kdfIterations  = preLogin.kdfIterations,
+                kdfMemory      = preLogin.kdfMemory ?: 65_536,
+                kdfParallelism = preLogin.kdfParallelism ?: 4,
             )
-            val stretchedKey   = crypto.stretchMasterKey(masterKey)
-            val masterPwHash   = crypto.hashMasterPassword(masterKey, masterPassword)
+            val stretchedKey = crypto.stretchMasterKey(masterKey)
+            val masterPwHash = crypto.hashMasterPassword(masterKey, masterPassword)
 
-            // 3. Authenticate
+            // Step 4: Authenticate
             val deviceId = ensureDeviceId()
+            val authEmailHeader = Base64.encodeToString(
+                normalizedEmail.toByteArray(Charsets.UTF_8),
+                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING,
+            )
+
+            Log.d(TAG, "Sending token request with deviceId=$deviceId")
+
             val tokenResponse = identityApi.getToken(
-                username           = email,
-                password           = masterPwHash,
-                deviceIdentifier   = deviceId,
-                twoFactorToken     = twoFactorToken,
-                twoFactorProvider  = twoFactorProvider,
+                authEmail         = authEmailHeader,
+                username          = normalizedEmail,
+                password          = masterPwHash,
+                deviceIdentifier  = deviceId,
+                twoFactorToken    = twoFactorToken,
+                twoFactorProvider = twoFactorProvider,
             )
 
             val tokenBody = tokenResponse.body()
 
+            // Check for 2FA requirement
             if (tokenResponse.code() == 400) {
-                // Parse 2FA required response
-                val errorBody = tokenResponse.errorBody()?.string()
-                if (errorBody?.contains("TwoFactorProviders2") == true) {
-                    return@withContext LoginResult.TwoFactorRequired
+                val errorBody = tokenResponse.errorBody()?.string() ?: ""
+                Log.w(TAG, "400 response: $errorBody")
+                return@withContext if (
+                    errorBody.contains("TwoFactorProviders") ||
+                    errorBody.contains("two-factor")
+                ) {
+                    LoginResult.TwoFactorRequired
+                } else {
+                    LoginResult.Error(parseErrorMessage(errorBody))
                 }
-                return@withContext LoginResult.Error(errorBody ?: "Authentication failed")
             }
 
             if (!tokenResponse.isSuccessful || tokenBody == null) {
-                return@withContext LoginResult.Error("Login failed: ${tokenResponse.code()}")
+                val errBody = tokenResponse.errorBody()?.string() ?: ""
+                Log.e(TAG, "Login failed: ${tokenResponse.code()} $errBody")
+                return@withContext LoginResult.Error(parseErrorMessage(errBody))
             }
 
-            // 4. Decrypt user key
+            Log.d(TAG, "Login successful, decrypting user key...")
+
+            // Step 5: Decrypt user symmetric key
             val encryptedUserKey = tokenBody.key
-                ?: return@withContext LoginResult.Error("No user key in token response")
+                ?: return@withContext LoginResult.Error(
+                    "No user key in token response. Is your account fully set up?"
+                )
 
-            val userKey = crypto.decryptUserKey(encryptedUserKey, stretchedKey)
+            val userKey = try {
+                crypto.decryptUserKey(encryptedUserKey, stretchedKey)
+            } catch (e: Exception) {
+                Log.e(TAG, "Key decryption failed", e)
+                return@withContext LoginResult.Error(
+                    "Email or master password is incorrect."
+                )
+            }
 
-            // 5. Decrypt org keys
+            // Step 6: Handle org keys
             val orgKeys = mutableMapOf<String, SymmetricKey>()
             val encPrivateKey = tokenBody.privateKey
             if (encPrivateKey != null) {
-                val privateKeyBytes = crypto.decryptPrivateKey(encPrivateKey, userKey)
-                // We'll decrypt org keys when we first sync and have org data
-                // For now store private key bytes in session for later org key decryption
-                // (handled in VaultRepository.sync via organizationDao)
+                runCatching { crypto.decryptPrivateKey(encPrivateKey, userKey) }
             }
 
-            // 6. Persist account
-            val accountId = UUID.randomUUID().toString()
+            // Step 7: Persist account
+            val accountId = parseUserIdFromJwt(tokenBody.accessToken)
+                ?: UUID.randomUUID().toString()
+
             accountDao.clearActiveFlag()
             accountDao.upsert(AccountEntity(
                 id                  = accountId,
-                userId              = tokenBody.accessToken.let { parseUserIdFromJwt(it) } ?: accountId,
-                email               = email,
+                userId              = accountId,
+                email               = normalizedEmail,
                 name                = null,
                 serverUrl           = serverUrl,
                 identityUrl         = identityUrl,
@@ -152,32 +271,81 @@ class AuthRepository @Inject constructor(
                 kdfMemory           = preLogin.kdfMemory,
                 kdfParallelism      = preLogin.kdfParallelism,
                 isActive            = true,
+                isLocal             = false,
             ))
             prefs.setActiveAccountId(accountId)
 
-            // 7. Populate token store + session
+            // Step 8: Populate token store + unlock session
             tokenStore.accessToken  = tokenBody.accessToken
             tokenStore.refreshToken = tokenBody.refreshToken
-            session.unlock(accountId, userKey, orgKeys)
+            tokenStore.refreshCallback = {
+                refreshTokens(accountId, tokenBody.refreshToken ?: "")
+            }
 
-            // Wipe sensitive key material from stack
+            session.unlock(accountId, userKey, orgKeys)
             masterKey.fill(0)
 
             LoginResult.Success(accountId)
-
         } catch (e: Exception) {
-            LoginResult.Error(e.message ?: "Unknown error during login")
+            Log.e(TAG, "Login exception", e)
+            LoginResult.Error("Connection error. Please check your internet and try again.")
         }
     }
 
     /**
-     * Unlock an existing account after lock (biometric or master password).
-     * Re-derives the user key and restores the in-memory session.
+     * Parse Bitwarden error bodies into human-friendly messages.
      */
+    private fun parseErrorMessage(errorBody: String): String {
+        if (errorBody.isBlank()) return "Authentication failed. Please try again."
+        return try {
+            val json = kotlinx.serialization.json.Json.parseToJsonElement(errorBody).jsonObject
+            val desc = json["error_description"]?.jsonPrimitive?.content
+            val msg  = json["Message"]?.jsonPrimitive?.content
+            val err  = json["error"]?.jsonPrimitive?.content
+            when {
+                desc?.contains("invalid", ignoreCase = true) == true ->
+                    "Email or master password is incorrect."
+                desc?.contains("two factor", ignoreCase = true) == true ->
+                    "Two-factor authentication is required."
+                desc != null -> desc
+                msg != null  -> msg
+                err != null  -> err
+                else -> "Authentication failed. Please try again."
+            }
+        } catch (_: Exception) {
+            "Authentication failed. Please try again."
+        }
+    }
+
+    // Sync Org Keys
+
+    suspend fun syncOrgKeys(accountId: String, userKey: SymmetricKey) {
+        withContext(ioDispatcher) {
+            val account = accountDao.getById(accountId) ?: return@withContext
+            val encPrivateKey = account.encryptedPrivateKey ?: return@withContext
+
+            val privateKeyBytes = runCatching {
+                crypto.decryptPrivateKey(encPrivateKey, userKey)
+            }.getOrNull() ?: return@withContext
+
+            val orgs = organizationDao.getAll(accountId)
+            val orgKeys = mutableMapOf<String, SymmetricKey>()
+
+            for (org in orgs) {
+                val encOrgKey = org.encryptedKey ?: continue
+                runCatching { orgKeys[org.id] = crypto.decryptOrgKey(encOrgKey, privateKeyBytes) }
+            }
+
+            if (orgKeys.isNotEmpty()) session.addOrgKeys(orgKeys)
+        }
+    }
+
+    // Unlock
+
     suspend fun unlockWithMasterPassword(
         accountId: String,
         masterPassword: String,
-    ): UnlockResult = withContext(Dispatchers.IO) {
+    ): UnlockResult = withContext(ioDispatcher) {
         try {
             val account = accountDao.getById(accountId)
                 ?: return@withContext UnlockResult.Error("Account not found")
@@ -194,19 +362,32 @@ class AuthRepository @Inject constructor(
 
             val encKey = account.encryptedKey
                 ?: return@withContext UnlockResult.Error("No encrypted key stored")
+
             val userKey = try {
                 crypto.decryptUserKey(encKey, stretchedKey)
             } catch (e: SecurityException) {
                 masterKey.fill(0)
                 return@withContext UnlockResult.InvalidPin
+            } catch (e: Exception) {
+                masterKey.fill(0)
+                return@withContext UnlockResult.Error("Wrong master password.")
+            }
+
+            // Restore token store for synced accounts
+            if (!account.isLocal) {
+                tokenStore.accessToken  = account.accessToken
+                tokenStore.refreshToken = account.refreshToken
+                tokenStore.serverUrl    = account.serverUrl
+                tokenStore.identityUrl  = account.identityUrl
+                tokenStore.refreshCallback = {
+                    refreshTokens(accountId, account.refreshToken ?: "")
+                }
             }
 
             session.unlock(accountId, userKey)
-            tokenStore.accessToken  = account.accessToken
-            tokenStore.refreshToken = account.refreshToken
-            tokenStore.serverUrl    = account.serverUrl
-            tokenStore.identityUrl  = account.identityUrl
             masterKey.fill(0)
+
+            if (!account.isLocal) syncOrgKeys(accountId, userKey)
 
             UnlockResult.Success
         } catch (e: Exception) {
@@ -214,35 +395,69 @@ class AuthRepository @Inject constructor(
         }
     }
 
-    suspend fun switchAccount(accountId: String) = withContext(Dispatchers.IO) {
+    // Account Management
+
+    suspend fun switchAccount(accountId: String) = withContext(ioDispatcher) {
         session.lock()
         accountDao.clearActiveFlag()
         accountDao.setActive(accountId)
         prefs.setActiveAccountId(accountId)
-        // User must authenticate again after switch
         session.setAccountExists()
     }
 
-    suspend fun signOut(accountId: String) = withContext(Dispatchers.IO) {
+    suspend fun signOut(accountId: String) = withContext(ioDispatcher) {
         session.signOut()
         accountDao.deleteById(accountId)
         prefs.setActiveAccountId(null)
+        tokenStore.clear()
+    }
+
+    /**
+     * Nuclear option: Wipes all local accounts, tokens, and resets security preferences.
+     */
+    suspend fun purgeAllData() = withContext(ioDispatcher) {
+        Log.w(TAG, "PURGE ALL DATA TRIGGERED!")
+        session.lock()
+        session.signOut()
+        accountDao.deleteAll()
+        prefs.setActiveAccountId(null)
+        prefs.setPanicPin("") // Reset panic pin after use
+        tokenStore.clear()
+    }
+
+    // Private Helpers
+
+    private suspend fun refreshTokens(accountId: String, refreshToken: String): String? {
+        return try {
+            val response = identityApi.refreshToken(refreshToken = refreshToken)
+            val body = response.body() ?: return null
+            tokenStore.accessToken  = body.accessToken
+            tokenStore.refreshToken = body.refreshToken ?: refreshToken
+            accountDao.updateTokens(accountId, body.accessToken, body.refreshToken ?: refreshToken)
+            body.accessToken
+        } catch (e: Exception) {
+            null
+        }
     }
 
     private suspend fun ensureDeviceId(): String {
-        var id = prefs.settings.first().deviceId
-        if (id.isBlank()) {
-            id = UUID.randomUUID().toString()
-            prefs.setDeviceId(id)
-        }
-        return id
+        val current = prefs.settings.first().deviceId
+        if (current.isNotBlank()) return current
+        val newId = UUID.randomUUID().toString()
+        prefs.setDeviceId(newId)
+        return newId
     }
 
     private fun parseUserIdFromJwt(token: String): String? = runCatching {
-        val payload = token.split(".")[1]
-        val decoded = android.util.Base64.decode(payload, android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING)
-        val json    = kotlinx.serialization.json.Json.parseToJsonElement(String(decoded)).jsonObject
-        json["sub"]?.jsonPrimitive?.content
+        val parts = token.split(".")
+        if (parts.size < 2) return null
+        val payload = parts[1]
+        val padded  = payload + "=".repeat((4 - payload.length % 4) % 4)
+        val decoded = Base64.decode(padded, Base64.URL_SAFE)
+        val jsonObj = kotlinx.serialization.json.Json.parseToJsonElement(
+            String(decoded)
+        ).jsonObject
+        jsonObj["sub"]?.jsonPrimitive?.content
     }.getOrNull()
 
     private fun AccountEntity.toDomain() = Account(
@@ -253,5 +468,6 @@ class AuthRepository @Inject constructor(
         premium   = premium,
         lastSync  = lastSync,
         isActive  = isActive,
+        isLocal   = isLocal,
     )
 }

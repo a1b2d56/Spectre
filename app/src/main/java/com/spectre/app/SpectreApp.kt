@@ -17,3 +17,4 @@ class SpectreApp : Application(), Configuration.Provider {
             .setMinimumLoggingLevel(android.util.Log.INFO)
             .build()
 }
+

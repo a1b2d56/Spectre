@@ -57,3 +57,4 @@ class SyncWorker @AssistedInject constructor(
         }
     }
 }
+
