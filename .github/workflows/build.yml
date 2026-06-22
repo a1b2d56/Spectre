@@ -83,12 +83,27 @@ jobs:
       # ── 9. Attach to GitHub Release if triggered by a version tag ──────────
       #   Push a tag like v1.8.4 to create a release:
       #     git tag v1.8.4 && git push origin v1.8.4
+      - name: Extract changelog for this version
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: changelog
+        run: |
+          VERSION="${{ github.ref_name }}"          # e.g. v1.8.4
+          VERSION_NUM="${VERSION#v}"                 # e.g. 1.8.4
+          # Extract the block between this version header and the next ## header
+          NOTES=$(awk "/^## \[${VERSION_NUM}\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+          # Pass multiline string to next step via env file
+          {
+            echo "NOTES<<CHANGELOG_EOF"
+            echo "$NOTES"
+            echo "CHANGELOG_EOF"
+          } >> $GITHUB_ENV
+
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.APK_NAME }}
-          generate_release_notes: true
           name: "Spectre ${{ github.ref_name }}"
+          body: ${{ env.NOTES }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
