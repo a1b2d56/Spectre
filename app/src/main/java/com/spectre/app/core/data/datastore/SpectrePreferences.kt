@@ -21,7 +21,7 @@ data class SpectreSettings(
     val lockTimeout: LockTimeout           = LockTimeout.ONE_MINUTE,
     val lockOnBackground: Boolean          = true,
     val lockOnScreenOff: Boolean           = true,
-    val biometricUnlock: Boolean           = true,
+    val biometricUnlock: Boolean           = false,
     val clipboardClearSeconds: Int         = 30,
     val screenshotProtection: Boolean      = true,
     val showFavicons: Boolean              = true,
@@ -62,6 +62,20 @@ data class SpectreSettings(
     val autofillBlacklist: Set<String>      = emptySet(),
     val autofillPrivilegedApps: Set<String> = emptySet(),
     val customServerUrl: String             = "",
+    
+    // Backups & SSH Agent
+    val sshAgentEnabled: Boolean            = false,
+    val backupEnabled: Boolean              = false,
+    val backupLocalPath: String             = "",
+    val backupWebDavUrl: String             = "",
+    val backupWebDavUsername: String        = "",
+    val backupWebDavPassword: String        = "",
+    val backupIntervalHours: Int            = 24,
+    val backupPassword: String              = "",
+    val fontScale: Float                    = 1.0f,
+    val isBold: Boolean                     = false,
+    val fontFamily: String                  = "default",
+    val linkCleanerEnabled: Boolean         = true,
 )
 
 enum class LockTimeout(val seconds: Int, val label: String) {
@@ -138,6 +152,19 @@ class SpectrePreferences @Inject constructor(
         val AF_BLACKLIST             = stringSetPreferencesKey("af_blacklist")
         val AF_PRIVILEGED_APPS       = stringSetPreferencesKey("af_privileged_apps")
         val CUSTOM_SERVER_URL        = stringPreferencesKey("custom_server_url")
+        
+        val SSH_AGENT_ENABLED       = booleanPreferencesKey("ssh_agent_enabled")
+        val BACKUP_ENABLED           = booleanPreferencesKey("backup_enabled")
+        val BACKUP_LOCAL_PATH        = stringPreferencesKey("backup_local_path")
+        val BACKUP_WEBDAV_URL        = stringPreferencesKey("backup_webdav_url")
+        val BACKUP_WEBDAV_USERNAME   = stringPreferencesKey("backup_webdav_username")
+        val BACKUP_WEBDAV_PASSWORD   = stringPreferencesKey("backup_webdav_password")
+        val BACKUP_INTERVAL_HOURS    = intPreferencesKey("backup_interval_hours")
+        val BACKUP_PASSWORD          = stringPreferencesKey("backup_password")
+        val FONT_SCALE               = floatPreferencesKey("font_scale")
+        val IS_BOLD                  = booleanPreferencesKey("is_bold")
+        val FONT_FAMILY              = stringPreferencesKey("font_family")
+        val LINK_CLEANER_ENABLED     = booleanPreferencesKey("link_cleaner_enabled")
     }
 
     val settings: Flow<SpectreSettings> = context.dataStore.data
@@ -148,7 +175,7 @@ class SpectrePreferences @Inject constructor(
                 lockTimeout            = runCatching { LockTimeout.valueOf(prefs[Keys.LOCK_TIMEOUT] ?: "") }.getOrDefault(LockTimeout.ONE_MINUTE),
                 lockOnBackground       = prefs[Keys.LOCK_ON_BACKGROUND]      ?: true,
                 lockOnScreenOff        = prefs[Keys.LOCK_ON_SCREEN_OFF]       ?: true,
-                biometricUnlock        = prefs[Keys.BIOMETRIC_UNLOCK]         ?: true,
+                biometricUnlock        = prefs[Keys.BIOMETRIC_UNLOCK]         ?: false,
                 clipboardClearSeconds  = prefs[Keys.CLIPBOARD_CLEAR_SECONDS]  ?: 30,
                 screenshotProtection   = prefs[Keys.SCREENSHOT_PROTECTION]    ?: true,
                 showFavicons           = prefs[Keys.SHOW_FAVICONS]            ?: true,
@@ -187,6 +214,19 @@ class SpectrePreferences @Inject constructor(
                 autofillBlacklist          = prefs[Keys.AF_BLACKLIST]           ?: emptySet(),
                 autofillPrivilegedApps      = prefs[Keys.AF_PRIVILEGED_APPS]     ?: emptySet(),
                 customServerUrl            = prefs[Keys.CUSTOM_SERVER_URL]      ?: "",
+                
+                sshAgentEnabled        = prefs[Keys.SSH_AGENT_ENABLED]      ?: false,
+                backupEnabled          = prefs[Keys.BACKUP_ENABLED]          ?: false,
+                backupLocalPath        = prefs[Keys.BACKUP_LOCAL_PATH]        ?: "",
+                backupWebDavUrl        = prefs[Keys.BACKUP_WEBDAV_URL]        ?: "",
+                backupWebDavUsername   = prefs[Keys.BACKUP_WEBDAV_USERNAME]   ?: "",
+                backupWebDavPassword   = prefs[Keys.BACKUP_WEBDAV_PASSWORD]   ?: "",
+                backupIntervalHours    = prefs[Keys.BACKUP_INTERVAL_HOURS]    ?: 24,
+                backupPassword          = prefs[Keys.BACKUP_PASSWORD]          ?: "",
+                fontScale              = prefs[Keys.FONT_SCALE]               ?: 1.0f,
+                isBold                 = prefs[Keys.IS_BOLD]                  ?: false,
+                fontFamily             = prefs[Keys.FONT_FAMILY]              ?: "default",
+                linkCleanerEnabled     = prefs[Keys.LINK_CLEANER_ENABLED]     ?: true,
             )
         }
 
@@ -233,6 +273,19 @@ class SpectrePreferences @Inject constructor(
     suspend fun setAfBlacklist(uris: Set<String>)   = update { it[Keys.AF_BLACKLIST] = uris }
     suspend fun setAfPrivilegedApps(pkgs: Set<String>) = update { it[Keys.AF_PRIVILEGED_APPS] = pkgs }
     suspend fun setCustomServerUrl(url: String) = update { it[Keys.CUSTOM_SERVER_URL] = url }
+
+    suspend fun setSshAgentEnabled(v: Boolean) = update { it[Keys.SSH_AGENT_ENABLED] = v }
+    suspend fun setBackupEnabled(v: Boolean) = update { it[Keys.BACKUP_ENABLED] = v }
+    suspend fun setBackupLocalPath(path: String) = update { it[Keys.BACKUP_LOCAL_PATH] = path }
+    suspend fun setBackupWebDavUrl(url: String) = update { it[Keys.BACKUP_WEBDAV_URL] = url }
+    suspend fun setBackupWebDavUsername(u: String) = update { it[Keys.BACKUP_WEBDAV_USERNAME] = u }
+    suspend fun setBackupWebDavPassword(p: String) = update { it[Keys.BACKUP_WEBDAV_PASSWORD] = p }
+    suspend fun setBackupIntervalHours(h: Int) = update { it[Keys.BACKUP_INTERVAL_HOURS] = h }
+    suspend fun setBackupPassword(p: String) = update { it[Keys.BACKUP_PASSWORD] = p }
+    suspend fun setFontScale(s: Float) = update { it[Keys.FONT_SCALE] = s }
+    suspend fun setIsBold(b: Boolean) = update { it[Keys.IS_BOLD] = b }
+    suspend fun setFontFamily(f: String) = update { it[Keys.FONT_FAMILY] = f }
+    suspend fun setLinkCleanerEnabled(v: Boolean) = update { it[Keys.LINK_CLEANER_ENABLED] = v }
 
     private suspend fun update(transform: (MutablePreferences) -> Unit) {
         context.dataStore.edit(transform)

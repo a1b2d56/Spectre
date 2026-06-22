@@ -158,9 +158,10 @@ class BiometricUnlock @Inject constructor(
         val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                 try {
-                    val decrypted = result.cryptoObject?.cipher?.doFinal(
+                    val cipher = result.cryptoObject?.cipher ?: throw NullPointerException("Biometric cryptoObject cipher is null")
+                    val decrypted = cipher.doFinal(
                         Base64.decode(encryptedData, Base64.NO_WRAP)
-                    ) ?: ByteArray(0)
+                    )
                     onResult(BiometricResult.Success(decrypted))
                 } catch (e: Exception) {
                     onResult(BiometricResult.Error("Decryption failed: ${e.message}"))

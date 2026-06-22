@@ -81,11 +81,9 @@ class VaultDetailViewModel @Inject constructor(
     fun copyToClipboard(label: String, value: String, clearAfter: Int = 30) {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText(label, value))
+        com.spectre.app.core.worker.ClipboardClearWorker.enqueue(context, clearAfter.toLong())
         viewModelScope.launch {
             _snackbar.emit("$label copied — clears in ${clearAfter}s")
-            delay(clearAfter * 1_000L)
-            // Clear clipboard
-            cm.setPrimaryClip(ClipData.newPlainText("", ""))
         }
     }
 
@@ -163,8 +161,9 @@ fun VaultDetailScreen(
                 onDelete  = { vm.softDelete(onBack) },
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { SnackbarHost(snackbarHostState, snackbar = { SpectreSnackbar(it) }) },
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         val c = cipher
         if (c == null) {

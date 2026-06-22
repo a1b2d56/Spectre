@@ -1,3 +1,5 @@
+@file:Suppress("UnstableApiUsage")
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -6,22 +8,32 @@ plugins {
     id("com.google.dagger.hilt.android")
     id("kotlin-parcelize")
 }
- 
+
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 android {
     namespace   = "com.spectre.app"
-    compileSdk  = 36
+    compileSdk  = 37
 
     defaultConfig {
         applicationId   = "com.spectre.app"
         minSdk          = 34
-        targetSdk       = 36
-        versionCode     = 14
-        versionName     = "1.5.3-beta"
-        vectorDrawables { useSupportLibrary = true }
+        targetSdk       = 37
+        versionCode     = 15
+        versionName     = "1.8.4"
+
+        // Optimizations:
+        // 1. Strip non-English localizations from dependencies
+        androidResources {
+            localeFilters += "en"
+        }
+
+        // 2. Only package modern 64-bit architectures (API 34+ runs on 64-bit systems)
+        ndk {
+            abiFilters.addAll(setOf("arm64-v8a", "x86_64"))
+        }
     }
 
     buildTypes {
@@ -37,15 +49,6 @@ android {
             isDebuggable          = true
             applicationIdSuffix   = ".debug"
             versionNameSuffix     = "-debug"
-        }
-    }
-
-    splits {
-        abi {
-            isEnable = true
-            reset()
-            include("armeabi-v7a", "arm64-v8a")
-            isUniversalApk = false
         }
     }
 
@@ -70,7 +73,11 @@ android {
                 "/META-INF/NOTICE*",
                 "/META-INF/INDEX.LIST",
                 "/META-INF/*.kotlin_module",
-                "DebugProbesKt.bin"
+                "DebugProbesKt.bin",
+                "/META-INF/licenses/**",
+                "**/kotlin/**/*.kotlin_metadata",
+                "**/kotlin/**/*.kotlin_builtins",
+                "**/META-INF/*.version"
             )
         }
     }
@@ -91,84 +98,89 @@ kotlin {
 
 dependencies {
     // Core
-    implementation("androidx.core:core-ktx:1.18.0")
-    implementation("androidx.appcompat:appcompat:1.7.1")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
-    implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("androidx.activity:activity-ktx:1.11.0")
-    implementation("androidx.core:core-splashscreen:1.2.0")
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.activity.ktx)
+    implementation(libs.androidx.core.splashscreen)
 
     // Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2025.05.01")
     implementation(composeBom)
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.animation:animation")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material:material-icons-extended")
-    debugImplementation("androidx.compose.ui:ui-tooling")
+    implementation(libs.backdrop)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.animation)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.material.icons.extended)
+    debugImplementation(libs.androidx.compose.ui.tooling)
 
     // Navigation
-    implementation("androidx.navigation:navigation-compose:2.9.8")
+    implementation(libs.androidx.navigation.compose)
 
     // Lifecycle + ViewModel
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
 
     // Hilt
-    implementation("com.google.dagger:hilt-android:2.59.2")
-    ksp("com.google.dagger:hilt-android-compiler:2.59.2")
-    implementation("androidx.hilt:hilt-navigation-compose:1.3.0")
-    implementation("androidx.hilt:hilt-work:1.3.0")
-    ksp("androidx.hilt:hilt-compiler:1.3.0")
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.android.compiler)
+    implementation(libs.androidx.hilt.navigation.compose)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
 
     // Room + SQLCipher
-    implementation("androidx.room:room-runtime:2.8.4")
-    implementation("androidx.room:room-ktx:2.8.4")
-    ksp("androidx.room:room-compiler:2.8.4")
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
     //noinspection Aligned16KB
-    implementation("net.zetetic:sqlcipher-android:4.15.0@aar")
-    implementation("androidx.sqlite:sqlite-ktx:2.6.2")
+    implementation(libs.sqlcipher.android)
+    implementation(libs.androidx.sqlite.ktx)
 
     // Security / Keystore
-    implementation("androidx.security:security-crypto:1.1.0")
-    implementation("androidx.biometric:biometric:1.2.0-alpha05")
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.biometric)
 
     // Networking
-    implementation("com.squareup.retrofit2:retrofit:3.0.0")
-    implementation("com.squareup.okhttp3:okhttp:5.3.2")
-    implementation("com.squareup.okhttp3:logging-interceptor:5.3.2")
-    implementation("com.squareup.retrofit2:converter-kotlinx-serialization:3.0.0")
+    implementation(libs.retrofit)
+    implementation(libs.okhttp)
+    implementation(libs.logging.interceptor)
+    implementation(libs.converter.kotlinx.serialization)
 
     // Serialisation
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+    implementation(libs.kotlinx.serialization.json)
 
     // DataStore
-    implementation("androidx.datastore:datastore-preferences:1.2.1")
+    implementation(libs.androidx.datastore.preferences)
+
+    // DocumentFile helper for storage access
+    implementation(libs.androidx.documentfile)
 
     // WorkManager
-    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation(libs.androidx.work.runtime.ktx)
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation(libs.kotlinx.coroutines.android)
 
     // Image loading (favicons)
-    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation(libs.coil.compose)
 
     // BouncyCastle (Argon2id + RSA-OAEP)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.84")
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.84")
+    implementation(libs.bcprov.jdk18on)
+    implementation(libs.bcpkix.jdk18on)
 
     // Credential Manager (passkeys)
-    implementation("androidx.credentials:credentials:1.6.0")
-    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    //noinspection PlaySdkIndex
+    implementation(libs.androidx.credentials)
+    //noinspection PlaySdkIndex
+    implementation(libs.androidx.credentials.play.services.auth)
 
     // QR generation
-    implementation("com.google.zxing:core:3.5.4")
+    implementation(libs.core)
 
     // Autofill Extensions
-    implementation("androidx.autofill:autofill:1.1.0")
+    implementation(libs.androidx.autofill)
 }

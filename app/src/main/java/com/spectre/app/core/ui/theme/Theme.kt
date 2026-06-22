@@ -1,193 +1,157 @@
 package com.spectre.app.core.ui.theme
 
 import android.app.Activity
+import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import com.spectre.app.R
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 
 enum class SpectreTheme { LIGHT, DARK, MIDNIGHT, PHANTOM, OBSIDIAN, ESPRESSO, MATCHA, NORD, ROSE }
 
-// Phantom (Deep Navy) palette
-private val PhantomScheme = darkColorScheme(
-    primary              = PhantomPrimary,
-    onPrimary            = PhantomOnPrimary,
-    primaryContainer     = Color(0xFF3B0764),
-    onPrimaryContainer   = Color(0xFFEDE9FE),
-    secondary            = PhantomSecondary,
-    background           = PhantomBackground,
-    surface              = PhantomSurface,
-    surfaceVariant       = PhantomSurfaceVar,
-    surfaceContainer     = Color(0xFF1C2128),
-    surfaceContainerHigh = Color(0xFF2D333B),
-    onSurface            = Color(0xFFCDD9E5),
-    onBackground         = Color(0xFFCDD9E5),
-    onSurfaceVariant     = Color(0xFF8B949E),
-    outline              = PhantomOutline,
-    error                = DangerRed,
+val LocalAppTheme = staticCompositionLocalOf { SpectreTheme.DARK }
+val LocalIsBold = staticCompositionLocalOf { false }
+
+val FigtreeFont = FontFamily(
+    Font(R.font.figtree_regular, FontWeight.Normal),
+    Font(R.font.figtree_medium, FontWeight.Medium),
+    Font(R.font.figtree_semibold, FontWeight.SemiBold),
+    Font(R.font.figtree_bold, FontWeight.Bold)
 )
 
-// Obsidian (Charcoal + Cyan) palette
-private val ObsidianScheme = darkColorScheme(
-    primary              = ObsidianPrimary,
-    onPrimary            = ObsidianOnPrimary,
-    primaryContainer     = Color(0xFF164E63),
-    onPrimaryContainer   = Color(0xFFCFFAFE),
-    secondary            = ObsidianSecondary,
-    background           = Color(0xFF0F172A), // Deeper Slate
-    surface              = Color(0xFF1E293B),
-    surfaceVariant       = Color(0xFF334155),
-    surfaceContainer     = Color(0xFF0F172A), // Slate 900
-    surfaceContainerLow  = Color(0xFF020617), // Slate 950
-    surfaceContainerHigh = Color(0xFF1E293B), // Slate 800
-    onSurface            = Color(0xFFF8FAFC),
-    onBackground         = Color(0xFFF8FAFC),
-    onSurfaceVariant     = Color(0xFF94A3B8),
-    outline              = Color(0xFF334155),
-    outlineVariant       = Color(0xFF1E293B),
-    error                = DangerRed,
+val OutfitFont = FontFamily(
+    Font(R.font.outfit_regular, FontWeight.Normal),
+    Font(R.font.outfit_medium, FontWeight.Medium),
+    Font(R.font.outfit_semibold, FontWeight.SemiBold),
+    Font(R.font.outfit_bold, FontWeight.Bold)
 )
 
-// Espresso (Chocolate) palette
-private val EspressoScheme = darkColorScheme(
-    primary             = EspressoPrimary,
-    onPrimary           = EspressoOnPrimary,
-    primaryContainer    = Color(0xFF3D2E14),
-    onPrimaryContainer  = Color(0xFFF0E0C8),
-    secondary           = EspressoSecondary,
-    background          = EspressoBackground,
-    surface             = EspressoSurface,
-    surfaceVariant      = Color(0xFF2B2624),
-    surfaceContainer     = Color(0xFF2B2624),
-    surfaceContainerHigh = Color(0xFF383230),
-    onSurface           = Color(0xFFE8E1DE),
-    onBackground        = Color(0xFFE8E1DE),
-    onSurfaceVariant    = Color(0xFFADA09A),
-    outline             = Color(0xFF5A4F4A),
-    error               = DangerRed,
+// Shapes from Ex-Employee
+val AppShapes = Shapes(
+    extraSmall = RoundedCornerShape(4.dp),
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(12.dp),
+    large = RoundedCornerShape(16.dp),
+    extraLarge = RoundedCornerShape(24.dp),
 )
 
-// Matcha palette
-private val MatchaScheme = darkColorScheme(
-    primary             = MatchaPrimary,
-    onPrimary           = MatchaOnPrimary,
-    primaryContainer    = Color(0xFF2A4A2A),
-    onPrimaryContainer  = Color(0xFFD0F0D0),
-    secondary           = MatchaSecondary,
-    background          = MatchaBackground,
-    surface             = MatchaSurface,
-    surfaceVariant      = Color(0xFF243224),
-    surfaceContainer     = Color(0xFF243224),
-    surfaceContainerHigh = Color(0xFF2F3F2F),
-    onSurface           = Color(0xFFDAE8DA),
-    onBackground        = Color(0xFFDAE8DA),
-    onSurfaceVariant    = Color(0xFF98B098),
-    outline             = Color(0xFF4A604A),
-    error               = DangerRed,
-)
-
-// Nord palette
-private val NordScheme = darkColorScheme(
-    primary             = NordPrimary,
-    onPrimary           = NordOnPrimary,
-    primaryContainer    = Color(0xFF434C5E),
-    onPrimaryContainer  = Color(0xFFD8DEE9),
-    secondary           = NordSecondary,
-    background          = NordBackground,
-    surface             = NordSurface,
-    surfaceVariant      = Color(0xFF434C5E),
-    surfaceContainer     = Color(0xFF3B4252),
-    surfaceContainerHigh = Color(0xFF434C5E),
-    onSurface           = Color(0xFFECEFF4),
-    onBackground        = Color(0xFFECEFF4),
-    onSurfaceVariant    = Color(0xFFD8DEE9),
-    outline             = Color(0xFF4C566A),
-    error               = DangerRed,
-)
-
-// Rosé palette
-private val RoseScheme = darkColorScheme(
-    primary             = RosePrimary,
-    onPrimary           = RoseOnPrimary,
-    primaryContainer    = Color(0xFF4A2535),
-    onPrimaryContainer  = Color(0xFFF8D8E8),
-    secondary           = RoseSecondary,
-    background          = RoseBackground,
-    surface             = RoseSurface,
-    surfaceVariant      = Color(0xFF30222A),
-    surfaceContainer     = Color(0xFF30222A),
-    surfaceContainerHigh = Color(0xFF3B2A34),
-    onSurface           = Color(0xFFE8DDE2),
-    onBackground        = Color(0xFFE8DDE2),
-    onSurfaceVariant    = Color(0xFFB8A0AC),
-    outline             = Color(0xFF5A4050),
-    error               = DangerRed,
-)
-
-/**
- * Resolves dynamic (Material You) colors where available, falling back to static palettes.
- * The [isDark] parameter is used by LIGHT/DARK/MIDNIGHT to decide which system scheme to use.
- */
-private fun dynamicOrFallback(context: android.content.Context, isDark: Boolean): ColorScheme {
-    return if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+@Composable
+fun FontWeight.dynamic(): FontWeight {
+    return if (LocalIsBold.current) {
+        when (this) {
+            FontWeight.Normal -> FontWeight.Bold
+            FontWeight.Medium -> FontWeight.Bold
+            FontWeight.SemiBold -> FontWeight.Bold
+            FontWeight.Bold -> FontWeight.Bold
+            else -> this
+        }
+    } else {
+        when (this) {
+            FontWeight.SemiBold -> FontWeight.Medium
+            FontWeight.Bold -> FontWeight.Medium
+            else -> this
+        }
+    }
 }
 
 @Composable
-fun SpectreTheme(
+fun SpectreAppTheme(
     appTheme: SpectreTheme = SpectreTheme.DARK,
+    fontScale: Float = 1f,
+    isBold: Boolean = false,
+    fontFamilyKey: String = "default",
     content: @Composable () -> Unit
 ) {
     val context = LocalContext.current
+    val useDynamic = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
     val colorScheme = when (appTheme) {
-        SpectreTheme.LIGHT    -> dynamicOrFallback(context, isDark = false)
-        SpectreTheme.DARK     -> dynamicOrFallback(context, isDark = true)
+        SpectreTheme.LIGHT -> when {
+            useDynamic -> dynamicLightColorScheme(context)
+            else -> FallbackSkyBlueLightScheme
+        }
+        SpectreTheme.DARK -> when {
+            useDynamic -> dynamicDarkColorScheme(context)
+            else -> FallbackSkyBlueDarkScheme
+        }
         SpectreTheme.MIDNIGHT -> {
-            // Material You colors with pure-black background for AMOLED screens
-            val base = dynamicOrFallback(context, isDark = true)
+            val base = if (useDynamic) dynamicDarkColorScheme(context) else MidnightColorScheme
+            // Force pure-black surfaces for AMOLED
             base.copy(
-                background           = Color.Black,
-                surface              = Color.Black,
-                surfaceVariant       = Color(0xFF080808),
-                surfaceContainer     = Color(0xFF040404),
-                surfaceContainerLow  = Color(0xFF020202),
-                surfaceContainerHigh = Color(0xFF0A0A0A),
-                surfaceDim           = Color.Black,
-                onSurface            = Color(0xFFF4F4F5),
-                onBackground         = Color(0xFFF4F4F5),
-                outline              = Color(0xFF18181B),
-                outlineVariant       = Color(0xFF09090B),
+                surface = MidnightColorScheme.surface,
+                background = MidnightColorScheme.background,
+                surfaceVariant = MidnightColorScheme.surfaceVariant,
+                surfaceContainer = MidnightColorScheme.surfaceContainer,
+                outlineVariant = MidnightColorScheme.outlineVariant,
             )
         }
-        SpectreTheme.PHANTOM  -> PhantomScheme
-        SpectreTheme.OBSIDIAN -> ObsidianScheme
-        SpectreTheme.ESPRESSO -> EspressoScheme
-        SpectreTheme.MATCHA   -> MatchaScheme
-        SpectreTheme.NORD     -> NordScheme
-        SpectreTheme.ROSE     -> RoseScheme
+        SpectreTheme.PHANTOM  -> PhantomColorScheme
+        SpectreTheme.OBSIDIAN -> ObsidianColorScheme
+        SpectreTheme.ESPRESSO -> EspressoColorScheme
+        SpectreTheme.MATCHA   -> MatchaColorScheme
+        SpectreTheme.NORD     -> NordColorScheme
+        SpectreTheme.ROSE     -> RoseColorScheme
     }
 
-    // Determine whether the status bar icons should be light or dark
-    val isLightTheme = appTheme == SpectreTheme.LIGHT
+    val isDark = appTheme != SpectreTheme.LIGHT
 
-    val view = LocalView.current
-    if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as Activity).window
-            WindowCompat.getInsetsController(window, view).apply {
-                isAppearanceLightStatusBars     = isLightTheme
-                isAppearanceLightNavigationBars = isLightTheme
-            }
-        }
+    // Edge-to-edge system bars (adapted from Ex-Employee side-effect)
+    SideEffect {
+        val activity = context as? ComponentActivity ?: return@SideEffect
+        val bgArgb = colorScheme.background.toArgb()
+        activity.enableEdgeToEdge(
+            statusBarStyle = if (isDark) {
+                SystemBarStyle.dark(bgArgb)
+            } else {
+                SystemBarStyle.light(bgArgb, bgArgb)
+            },
+            navigationBarStyle = if (isDark) {
+                SystemBarStyle.dark(bgArgb)
+            } else {
+                SystemBarStyle.light(bgArgb, bgArgb)
+            },
+        )
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography  = SpectreTypography,
-        content     = content
-    )
+    val fontFamily = when (fontFamilyKey) {
+        "figtree" -> FigtreeFont
+        "outfit" -> OutfitFont
+        else -> null
+    }
+
+    val typography = appTypography(isBold, fontFamily)
+    val currentDensity = androidx.compose.ui.platform.LocalDensity.current
+    val customDensity = androidx.compose.runtime.remember(currentDensity, fontScale) {
+        androidx.compose.ui.unit.Density(
+            density = currentDensity.density,
+            fontScale = currentDensity.fontScale * fontScale
+        )
+    }
+
+    CompositionLocalProvider(
+        LocalAppTheme provides appTheme,
+        LocalIsBold provides isBold,
+        androidx.compose.ui.platform.LocalDensity provides customDensity
+    ) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = typography,
+            shapes = AppShapes,
+            content = content
+        )
+    }
 }
-

@@ -174,13 +174,40 @@ class AuthRepository @Inject constructor(
 
             Log.d(TAG, "KDF: type=${preLogin.kdf}, iterations=${preLogin.kdfIterations}")
 
+            // Validate pre-login KDF parameters
+            if (preLogin.kdf == 0) {
+                if (preLogin.kdfIterations < 600_000) {
+                    return@withContext LoginResult.Error("PBKDF2 iterations must be at least 600,000; contact the server admin.")
+                }
+            } else if (preLogin.kdf == 1) {
+                if (preLogin.kdfIterations < 2) {
+                    return@withContext LoginResult.Error("Argon2 iterations must be at least 2; contact the server admin.")
+                }
+                val m = preLogin.kdfMemory ?: 64
+                if (m < 16) {
+                    return@withContext LoginResult.Error("Argon2 memory must be at least 16 MiB; contact the server admin.")
+                }
+                val p = preLogin.kdfParallelism ?: 4
+                if (p < 1) {
+                    return@withContext LoginResult.Error("Argon2 parallelism must be at least 1; contact the server admin.")
+                }
+            }
+
+            // Scale Argon2id memory from MB to KB (if less than 1024, it is in MB)
+            val m = preLogin.kdfMemory ?: 64
+            val memoryKb = if (preLogin.kdf == 1) {
+                if (m < 1024) m * 1024 else m
+            } else {
+                m
+            }
+
             // Step 3: Derive keys
             val masterKey = crypto.deriveMasterKey(
                 password       = masterPassword,
                 email          = normalizedEmail,
                 kdfType        = preLogin.kdf,
                 kdfIterations  = preLogin.kdfIterations,
-                kdfMemory      = preLogin.kdfMemory ?: 65_536,
+                kdfMemory      = memoryKb,
                 kdfParallelism = preLogin.kdfParallelism ?: 4,
             )
             val stretchedKey = crypto.stretchMasterKey(masterKey)
@@ -350,12 +377,19 @@ class AuthRepository @Inject constructor(
             val account = accountDao.getById(accountId)
                 ?: return@withContext UnlockResult.Error("Account not found")
 
+            val m = account.kdfMemory ?: 64
+            val memoryKb = if (account.kdf == 1) {
+                if (m < 1024) m * 1024 else m
+            } else {
+                m
+            }
+
             val masterKey = crypto.deriveMasterKey(
                 password       = masterPassword,
                 email          = account.email,
                 kdfType        = account.kdf,
                 kdfIterations  = account.kdfIterations,
-                kdfMemory      = account.kdfMemory ?: 65_536,
+                kdfMemory      = memoryKb,
                 kdfParallelism = account.kdfParallelism ?: 4,
             )
             val stretchedKey = crypto.stretchMasterKey(masterKey)

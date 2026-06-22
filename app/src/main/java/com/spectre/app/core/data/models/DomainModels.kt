@@ -185,6 +185,7 @@ data class DecryptedSend(
     val textHidden: Boolean,
     val fileName: String?,
     val revisionDate: String,
+    val keyBase64: String? = null,
 )
 
 // Watchtower

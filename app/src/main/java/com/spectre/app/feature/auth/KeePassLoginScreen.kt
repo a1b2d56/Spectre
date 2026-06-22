@@ -147,6 +147,7 @@ fun KeePassLoginScreen(
             )
         },
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         Column(
             modifier = Modifier
@@ -201,28 +202,30 @@ fun KeePassLoginScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            OutlinedTextField(
-                value         = state.password,
-                onValueChange = vm::onPasswordChange,
-                label         = { Text("Database Password") },
-                leadingIcon   = { Icon(Icons.Filled.Lock, null) },
-                trailingIcon  = {
-                    IconButton(onClick = vm::onToggleShowPassword) {
-                        Icon(if (state.showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null)
-                    }
-                },
-                visualTransformation = if (state.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction    = ImeAction.Done,
-                    // Incognito keyboard — no learning, no suggestions
-                    autoCorrectEnabled = false,
-                ),
-                keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); vm.unlock() }),
-                singleLine    = true,
-                modifier      = Modifier.fillMaxWidth(),
-                shape         = RoundedCornerShape(14.dp),
-            )
+            com.spectre.app.core.ui.components.IncognitoInput {
+                OutlinedTextField(
+                    value         = state.password,
+                    onValueChange = vm::onPasswordChange,
+                    label         = { Text("Database Password") },
+                    leadingIcon   = { Icon(Icons.Filled.Lock, null) },
+                    trailingIcon  = {
+                        IconButton(onClick = vm::onToggleShowPassword) {
+                            Icon(if (state.showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null)
+                        }
+                    },
+                    visualTransformation = if (state.showPassword) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction    = ImeAction.Done,
+                        // Incognito keyboard — no learning, no suggestions
+                        autoCorrectEnabled = false,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); vm.unlock() }),
+                    singleLine    = true,
+                    modifier      = Modifier.fillMaxWidth(),
+                    shape         = RoundedCornerShape(14.dp),
+                )
+            }
 
             AnimatedVisibility(visible = state.error != null) {
                 state.error?.let { err ->

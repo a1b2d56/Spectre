@@ -285,6 +285,7 @@ fun VaultEditScreen(
             )
         },
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         Column(
             modifier = Modifier
@@ -473,14 +474,32 @@ private fun SpectreTextField(
     singleLine: Boolean = true,
     minLines: Int = 1,
 ) {
+    val isMultiLine = minLines > 1 || !singleLine
     OutlinedTextField(
         value           = value,
         onValueChange   = onChange,
         label           = { Text(label) },
-        leadingIcon     = leadingIcon?.let { { Icon(it, null) } },
+        leadingIcon     = leadingIcon?.let {
+            {
+                if (isMultiLine) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .padding(top = 16.dp),
+                        contentAlignment = Alignment.TopCenter
+                    ) {
+                        Icon(it, null)
+                    }
+                } else {
+                    Icon(it, null)
+                }
+            }
+        },
         singleLine      = singleLine,
         minLines        = minLines,
-        modifier        = Modifier.fillMaxWidth(),
+        modifier        = Modifier
+            .fillMaxWidth()
+            .then(if (isMultiLine) Modifier.height(IntrinsicSize.Min) else Modifier),
         shape           = RoundedCornerShape(12.dp),
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
     )

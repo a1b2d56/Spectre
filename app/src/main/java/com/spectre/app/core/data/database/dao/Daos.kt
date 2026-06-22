@@ -111,6 +111,9 @@ interface CipherDao {
     @Query("SELECT * FROM ciphers WHERE accountId = :accountId AND pendingSync = 1")
     suspend fun getPendingSync(accountId: String): List<CipherEntity>
 
+    @Query("SELECT * FROM ciphers WHERE accountId = :accountId")
+    suspend fun getAllForAccount(accountId: String): List<CipherEntity>
+
     @Query("DELETE FROM ciphers WHERE accountId = :accountId AND deletedDate IS NOT NULL")
     suspend fun purgeTrash(accountId: String)
 

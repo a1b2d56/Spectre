@@ -9,6 +9,9 @@ import com.spectre.app.core.data.models.*
 import com.spectre.app.core.network.VaultApi
 import com.spectre.app.core.network.model.*
 import com.spectre.app.core.security.VaultSession
+import com.spectre.app.core.sync.CipherMerge
+import com.spectre.app.core.sync.SyncDiffer
+import com.spectre.app.core.sync.SyncOp
 import com.spectre.app.di.IoDispatcher
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -100,13 +103,48 @@ class VaultRepository @Inject constructor(
             cipherDao.observeByType(accountId, CipherType.IDENTITY.value).first().mapNotNull { decryptCipher(it) }
         }
 
-    // Full sync
+    // ── Differential Sync ─────────────────────────────────────────────────
+    //
+    // Three phases per sync:
+    //   1. PUSH  — upload locally-modified (pendingSync=true) ciphers to server.
+    //   2. PULL  — fetch the full sync response from server.
+    //   3. APPLY — run SyncDiffer + CipherMerge to reconcile without data loss.
 
     suspend fun sync(accountId: String): Result<Unit> = withContext(ioDispatcher) {
         val account = accountDao.getById(accountId)
         if (account?.isLocal == true) return@withContext Result.success(Unit)
 
         runCatching {
+            // ── Phase 1: Push local changes ───────────────────────────────
+            val pendingCiphers = cipherDao.getPendingSync(accountId)
+            for (entity in pendingCiphers) {
+                runCatching {
+                    val decrypted = decryptCipher(entity) ?: return@runCatching
+                    val request   = encryptCipherRequest(decrypted)
+                    if (entity.lastSyncedRevision == null) {
+                        // Never pushed before → create on server
+                        val resp = vaultApi.createCipher(request)
+                        val body = resp.body() ?: return@runCatching
+                        cipherDao.upsert(entity.copy(
+                            id                 = body.id,
+                            revisionDate       = body.revisionDate,
+                            pendingSync        = false,
+                            lastSyncedRevision = body.revisionDate,
+                        ))
+                    } else {
+                        // Existing cipher → update on server
+                        val resp = vaultApi.updateCipher(entity.id, request)
+                        val body = resp.body() ?: return@runCatching
+                        cipherDao.upsert(entity.copy(
+                            revisionDate       = body.revisionDate,
+                            pendingSync        = false,
+                            lastSyncedRevision = body.revisionDate,
+                        ))
+                    }
+                } // ignore individual push errors; they will be retried on next sync
+            }
+
+            // ── Phase 2: Pull full server snapshot ────────────────────────
             val response = vaultApi.sync()
             val body     = response.body()
                 ?: error("Empty sync response (${response.code()}): ${response.errorBody()?.string()}")
@@ -114,7 +152,7 @@ class VaultRepository @Inject constructor(
             // Update account premium status
             accountDao.updatePremiumStatus(accountId, body.profile.premium)
 
-            // Organisations
+            // Organisations — no local edits possible, safe to replace
             organizationDao.deleteAllForAccount(accountId)
             organizationDao.upsertAll(body.profile.organizations.map { org ->
                 OrganizationEntity(
@@ -126,21 +164,84 @@ class VaultRepository @Inject constructor(
                 )
             })
 
-            // Folders
-            folderDao.deleteAllForAccount(accountId)
-            folderDao.upsertAll(body.folders.map { it.toEntity(accountId) })
-
-            // Collections
+            // Collections — no local edits possible, safe to replace
             collectionDao.deleteAllForAccount(accountId)
             collectionDao.upsertAll(body.collections.map { it.toEntity(accountId) })
 
-            // Ciphers
-            cipherDao.deleteAllForAccount(accountId)
-            cipherDao.upsertAll(body.ciphers.map { it.toEntity(accountId) })
-
-            // Sends
+            // Sends — no local edits tracked yet, safe to replace
             sendDao.deleteAllForAccount(accountId)
             sendDao.upsertAll(body.sends.map { it.toEntity(accountId) })
+
+            // Folders — simple differential (revision date comparison)
+            run {
+                val localFolders  = folderDao.getAll(accountId).associateBy { it.id }
+                val remoteFolders = body.folders.associateBy { it.id }
+                // Insert / update server folders
+                for ((id, remote) in remoteFolders) {
+                    val local = localFolders[id]
+                    if (local == null || (!local.pendingSync && remote.revisionDate != local.revisionDate)) {
+                        folderDao.upsert(remote.toEntity(accountId).copy(
+                            lastSyncedRevision = remote.revisionDate
+                        ))
+                    }
+                }
+                // Delete local folders that are gone from the server
+                for ((id, local) in localFolders) {
+                    if (id !in remoteFolders && !local.pendingSync) {
+                        folderDao.deleteById(id)
+                    }
+                }
+            }
+
+            // ── Phase 3: Apply differential cipher ops ────────────────────
+            val localCiphers = cipherDao.getAllForAccount(accountId)
+            val ops          = SyncDiffer.diff(localCiphers, body.ciphers)
+
+            for (op in ops) {
+                when (op) {
+                    is SyncOp.NoChange -> Unit // nothing to do
+
+                    is SyncOp.InsertLocally -> {
+                        cipherDao.upsert(op.remote.toEntity(accountId).copy(
+                            pendingSync        = false,
+                            lastSyncedRevision = op.remote.revisionDate,
+                        ))
+                    }
+
+                    is SyncOp.UpdateLocally -> {
+                        cipherDao.upsert(op.remote.toEntity(accountId).copy(
+                            localFaviconUri    = op.local.localFaviconUri,
+                            pendingSync        = false,
+                            lastSyncedRevision = op.remote.revisionDate,
+                        ))
+                    }
+
+                    is SyncOp.SoftDeleteLocally -> {
+                        cipherDao.softDelete(op.local.id, op.local.deletedDate
+                            ?: java.time.Instant.now().toString())
+                    }
+
+                    is SyncOp.HardDeleteLocally -> {
+                        cipherDao.hardDelete(op.local.id)
+                    }
+
+                    is SyncOp.PushToServer -> Unit // already handled in Phase 1
+
+                    is SyncOp.UpdateOnServer -> Unit // already handled in Phase 1
+
+                    is SyncOp.SoftDeleteOnServer -> Unit // already handled in Phase 1
+
+                    is SyncOp.MergeConflict -> {
+                        // Both sides changed — run 3-way merge and save result
+                        val merged = CipherMerge.merge(op.remote, op.local, accountId)
+                        cipherDao.upsert(merged)
+                        // Schedule a server push of the merged result on next sync
+                    }
+                }
+            }
+
+            // Update last-sync timestamp
+            accountDao.updateLastSync(accountId, System.currentTimeMillis())
         }
     }
 
@@ -364,7 +465,9 @@ class VaultRepository @Inject constructor(
     private fun decryptSend(entity: SendEntity): DecryptedSend? = runCatching {
         val vaultKey = session.getUserKey()
         val decSendKeyHex = crypto.decryptOrNull(entity.key, vaultKey) ?: return null
-        val sendKey = SymmetricKey(decSendKeyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
+        val keyBytes = decSendKeyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val sendKey = SymmetricKey(keyBytes)
+        val keyBase64 = android.util.Base64.encodeToString(keyBytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
 
         val decName = crypto.decryptOrNull(entity.name, vaultKey) ?: entity.name
         val decText = entity.textContent?.let { crypto.decryptOrNull(it, sendKey) }
@@ -383,6 +486,7 @@ class VaultRepository @Inject constructor(
             textHidden = entity.textHidden,
             fileName = entity.fileName,
             revisionDate = entity.revisionDate,
+            keyBase64 = keyBase64,
         )
     }.getOrNull()
 

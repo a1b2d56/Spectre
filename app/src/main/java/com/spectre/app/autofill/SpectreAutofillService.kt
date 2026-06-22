@@ -54,11 +54,16 @@ class SpectreAutofillService : AutofillService() {
         val structure = request.fillContexts.lastOrNull()?.structure
         if (structure == null) { callback.onSuccess(null); return }
 
-        val parsedStructure = autofillParser.parse(structure)
-        if (parsedStructure.credentialFields.isEmpty()) { callback.onSuccess(null); return }
-
         val job = serviceScope.launch {
             try {
+                val parsedStructure = withContext(ioDispatcher) {
+                    autofillParser.parse(structure)
+                }
+                if (parsedStructure.credentialFields.isEmpty()) {
+                    callback.onSuccess(null)
+                    return@launch
+                }
+
                 val response = if (session.isUnlocked) {
                     buildUnlockedResponse(request, parsedStructure)
                 } else {

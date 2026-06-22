@@ -40,7 +40,7 @@ fun SendScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 110.dp)
         ) {
             SpectreTopBar(title = "Send")
 
@@ -244,7 +244,8 @@ fun SendScreen(
 
         SnackbarHost(
             hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp),
+            snackbar = { SpectreSnackbar(it) }
         )
 
         if (state.generatedLink != null) {

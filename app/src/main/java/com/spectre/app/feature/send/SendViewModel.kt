@@ -90,15 +90,13 @@ class SendViewModel @Inject constructor(
             )
 
             result.onSuccess { send ->
-                // Note: The actual Bitwarden Send link format includes the key in the anchor
-                // But since we are encrypting the key with the vault key locally, 
-                // the "send key" used for the payload is what goes into the link.
-                // In our implementation, we generated a random sendKey in VaultRepository.
-                
-                // For a fully functional link, we'd need to expose the raw sendKey from the repository.
-                // But for now, we'll use the ID.
                 val serverUrl = _state.value.serverUrl
-                val link = "$serverUrl/#/send/${send.id}" 
+                val base = getSendBaseUrl(serverUrl)
+                val link = if (send.keyBase64 != null) {
+                    "$base${send.id}/${send.keyBase64}"
+                } else {
+                    "$base${send.id}"
+                }
                 
                 _state.update { it.copy(isGenerating = false, generatedLink = link) }
             }.onFailure { e ->
@@ -108,10 +106,28 @@ class SendViewModel @Inject constructor(
         }
     }
 
+    private fun getSendBaseUrl(serverUrl: String): String {
+        val cleanUrl = serverUrl.trim().removeSuffix("/")
+        return when {
+            cleanUrl.contains("api.eu.bitwarden.com") || cleanUrl.contains("identity.eu.bitwarden.com") || cleanUrl.contains("vault.eu.bitwarden.com") -> {
+                "https://send.eu.bitwarden.com/#/send/"
+            }
+            cleanUrl.contains("api.bitwarden.com") || cleanUrl.contains("identity.bitwarden.com") || cleanUrl.contains("vault.bitwarden.com") -> {
+                "https://send.bitwarden.com/#/send/"
+            }
+            else -> {
+                val base = if (cleanUrl.endsWith("/api")) cleanUrl.removeSuffix("/api") else cleanUrl
+                val finalBase = if (base.endsWith("/")) base else "$base/"
+                "${finalBase}#/send/"
+            }
+        }
+    }
+
     fun copyLink() {
         val link = _state.value.generatedLink ?: return
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Spectre Send Link", link))
+        com.spectre.app.core.worker.ClipboardClearWorker.enqueue(context, 30L)
         viewModelScope.launch { _snackbar.emit("Link copied to clipboard") }
     }
 

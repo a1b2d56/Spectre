@@ -15,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.scale
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +68,7 @@ data class WatchtowerUiState(
     val isCheckingHibp: Boolean           = false,
     val expandedSection: String?          = null,
     val ignoredCount: Int                 = 0,
+    val ignoredItems: List<com.spectre.app.core.data.database.entities.IgnoredWatchtowerItemEntity> = emptyList()
 )
 
 
@@ -87,6 +90,9 @@ class WatchtowerViewModel @Inject constructor(
 
     val settings = prefs.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), com.spectre.app.core.data.datastore.SpectreSettings())
 
+    val allCiphers = vaultRepository.observeAllCiphers()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     private val httpClient = OkHttpClient()
 
     init {
@@ -98,12 +104,21 @@ class WatchtowerViewModel @Inject constructor(
                 vaultRepository.observeAllCiphers(),
                 ignoredDao.observeAll(accountId)
             ) { currentSettings, allCiphers, ignoredItems ->
-                val report = watchtowerUseCase.analyze(currentSettings, allCiphers, ignoredItems)
-                _state.update { 
-                    it.copy(
-                        report = report,
+                val newReport = watchtowerUseCase.analyze(currentSettings, allCiphers, ignoredItems)
+                _state.update { currentState ->
+                    val preservedExposed = currentState.report?.exposedPasswords ?: emptyList()
+                    val preservedChecked = currentState.report?.hibpChecked ?: false
+                    val preservedError   = currentState.report?.hibpError
+                    
+                    currentState.copy(
+                        report = newReport.copy(
+                            exposedPasswords = preservedExposed,
+                            hibpChecked      = preservedChecked,
+                            hibpError        = preservedError
+                        ),
                         isLoading = false,
-                        ignoredCount = ignoredItems.size
+                        ignoredCount = ignoredItems.size,
+                        ignoredItems = ignoredItems
                     )
                 }
             }.collect()
@@ -116,12 +131,21 @@ class WatchtowerViewModel @Inject constructor(
             val accountId = session.activeAccountId ?: return@launch
             val allCiphers = vaultRepository.getAllDecryptedCiphers(accountId)
             val ignoredItems = ignoredDao.getAll(accountId)
-            val report = watchtowerUseCase.analyze(settings.value, allCiphers, ignoredItems)
-            _state.update { 
-                it.copy(
-                    report = report,
+            val newReport = watchtowerUseCase.analyze(settings.value, allCiphers, ignoredItems)
+            _state.update { currentState ->
+                val preservedExposed = currentState.report?.exposedPasswords ?: emptyList()
+                val preservedChecked = currentState.report?.hibpChecked ?: false
+                val preservedError   = currentState.report?.hibpError
+
+                currentState.copy(
+                    report = newReport.copy(
+                        exposedPasswords = preservedExposed,
+                        hibpChecked      = preservedChecked,
+                        hibpError        = preservedError
+                    ),
                     isLoading = false,
-                    ignoredCount = ignoredItems.size
+                    ignoredCount = ignoredItems.size,
+                    ignoredItems = ignoredItems
                 )
             }
         }
@@ -157,6 +181,7 @@ class WatchtowerViewModel @Inject constructor(
                     val request  = Request.Builder()
                         .url("https://api.pwnedpasswords.com/range/$prefix")
                         .header("Add-Padding", "true")
+                        .header("User-Agent", "Spectre-Password-Manager")
                         .build()
 
                     httpClient.newCall(request).execute().use { response ->
@@ -168,11 +193,13 @@ class WatchtowerViewModel @Inject constructor(
                                         (parts.getOrNull(1)?.trim()?.toLongOrNull() ?: 0L) > 0L
                             }
                             if (found) breached.add(cipher)
+                        } else {
+                            throw Exception("HTTP error ${response.code}")
                         }
                     }
                     delay(50) // gentle rate limiting
                 } catch (e: Exception) {
-                    error = "HIBP check interrupted: ${e.message}"
+                    error = "HIBP check failed: ${e.message}"
                     break
                 }
             }
@@ -211,6 +238,13 @@ class WatchtowerViewModel @Inject constructor(
         }
     }
 
+    fun unignoreItem(cipherId: String, issueType: String) {
+        viewModelScope.launch {
+            val accountId = session.activeAccountId ?: return@launch
+            ignoredDao.remove(accountId, cipherId, issueType)
+        }
+    }
+
     // Helpers for HIBP
     private fun sha1Hex(input: String): String {
         val digest = MessageDigest.getInstance("SHA-1")
@@ -230,17 +264,20 @@ fun WatchtowerScreen(
     vm: WatchtowerViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val allCiphers by vm.allCiphers.collectAsStateWithLifecycle()
+    var showIgnoredDialog by remember { mutableStateOf(false) }
 
     Scaffold(
         modifier       = modifier,
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            SpectreTopBar(title = "Watchtower", subtitle = "Vault health analysis")
+            SpectreTopBar(title = "Watchtower")
         }
     ) { padding ->
         LazyColumn(
             modifier       = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 120.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
 
@@ -293,31 +330,39 @@ fun WatchtowerScreen(
                     }
 
                     Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         OutlinedButton(
                             onClick  = { vm.refresh() },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(48.dp),
                             shape    = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                         ) {
-                            Icon(Icons.Filled.Refresh, null, Modifier.size(14.dp))
+                            Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Refresh", style = MaterialTheme.typography.labelMedium)
+                            Text("Refresh", style = MaterialTheme.typography.labelLarge, maxLines = 1)
                         }
                         Button(
                             onClick  = { vm.performHibpCheck() },
                             enabled  = !state.isCheckingHibp,
-                            modifier = Modifier.weight(1f).height(40.dp),
+                            modifier = Modifier.weight(1f).height(48.dp),
                             shape    = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(0.dp)
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
                         ) {
                             if (state.isCheckingHibp) {
-                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary)
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
                             } else {
-                                Icon(Icons.Filled.GppBad, null, Modifier.size(16.dp))
+                                Icon(Icons.Filled.GppBad, null, modifier = Modifier.size(18.dp))
                             }
-                            Spacer(Modifier.width(6.dp))
-                            Text("Check Breaches", style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Check Breaches", style = MaterialTheme.typography.labelLarge, maxLines = 1)
                         }
                     }
 
@@ -364,7 +409,7 @@ fun WatchtowerScreen(
                     HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
                     
                     Row(
-                        modifier = Modifier.fillMaxWidth().height(48.dp).clickable { /* TODO: Open ignored */ },
+                        modifier = Modifier.fillMaxWidth().height(48.dp).clickable { showIgnoredDialog = true },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -403,6 +448,15 @@ fun WatchtowerScreen(
             }
 
             item { Spacer(Modifier.height(24.dp)) }
+        }
+
+        if (showIgnoredDialog) {
+            IgnoredItemsDialog(
+                ignoredItems = state.ignoredItems,
+                allCiphers = allCiphers,
+                onUnignore = vm::unignoreItem,
+                onDismiss = { showIgnoredDialog = false }
+            )
         }
     }
 }
@@ -503,4 +557,77 @@ private fun WSectionCard(
             }
         }
     }
+}
+
+@Composable
+private fun IgnoredItemsDialog(
+    ignoredItems: List<com.spectre.app.core.data.database.entities.IgnoredWatchtowerItemEntity>,
+    allCiphers: List<DecryptedCipher>,
+    onUnignore: (String, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ignored Items", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
+        text = {
+            if (ignoredItems.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(100.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No ignored items.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(ignoredItems) { item ->
+                        val cipher = allCiphers.find { it.id == item.cipherId }
+                        val name = cipher?.name ?: "Unknown Entry"
+                        val issueLabel = when (item.issueType) {
+                            "exposed" -> "Breached Password"
+                            "weak" -> "Weak Password"
+                            "reused" -> "Reused Password"
+                            "old" -> "Old Password"
+                            "veryold" -> "Very Old Password"
+                            "expired" -> "Expired Card"
+                            "duplicate" -> "Duplicate"
+                            "insecure" -> "Insecure Link"
+                            "inactive_2fa" -> "2FA Missing"
+                            "totp" -> "2FA Missing"
+                            "incomplete" -> "Incomplete Entry"
+                            else -> item.issueType.replaceFirstChar { it.uppercase() }
+                        }
+                        
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(issueLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            IconButton(
+                                onClick = { onUnignore(item.cipherId, item.issueType) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, "Restore", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }

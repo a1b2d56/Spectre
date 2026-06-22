@@ -13,7 +13,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.automirrored.outlined.*
 import androidx.compose.material3.*
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -114,6 +113,7 @@ class GeneratorViewModel @Inject constructor(
         val targetValue = value ?: _state.value.result?.value ?: return
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("Generated password", targetValue))
+        com.spectre.app.core.worker.ClipboardClearWorker.enqueue(context, 30L)
         
         if (value == null) { // Only add to history if it's the current result
             viewModelScope.launch {
@@ -144,10 +144,11 @@ fun GeneratorScreen(
 
     Scaffold(
         modifier = modifier,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { SnackbarHost(snackbarHostState, snackbar = { SpectreSnackbar(it) }) },
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            SpectreTopBar(title = "Generator", subtitle = "Military-grade encryption")
+            SpectreTopBar(title = "Generator")
         }
     ) { padding ->
         Column(
@@ -155,8 +156,7 @@ fun GeneratorScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 8.dp)
-                .padding(bottom = 80.dp), // Clear the floating navbar
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 110.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
 
@@ -355,6 +355,7 @@ private fun PremiumOutputCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModeTabs(mode: GeneratorMode, onChange: (GeneratorMode) -> Unit) {
     val modes = listOf(
@@ -367,20 +368,18 @@ private fun ModeTabs(mode: GeneratorMode, onChange: (GeneratorMode) -> Unit) {
     )
     val selectedIndex = modes.indexOfFirst { it.first == mode }.coerceAtLeast(0)
 
-    ScrollableTabRow(
+    SecondaryScrollableTabRow(
         selectedTabIndex = selectedIndex,
         containerColor   = Color.Transparent,
         contentColor     = MaterialTheme.colorScheme.primary,
         edgePadding      = 0.dp,
         divider          = {},
-        indicator        = { tabPositions ->
-            if (selectedIndex < tabPositions.size) {
-                TabRowDefaults.SecondaryIndicator(
-                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedIndex]),
-                    color    = MaterialTheme.colorScheme.primary,
-                    height   = 3.dp
-                )
-            }
+        indicator        = {
+            TabRowDefaults.SecondaryIndicator(
+                modifier = Modifier.tabIndicatorOffset(selectedIndex),
+                color    = MaterialTheme.colorScheme.primary,
+                height   = 3.dp
+            )
         },
         modifier = Modifier.fillMaxWidth()
     ) {

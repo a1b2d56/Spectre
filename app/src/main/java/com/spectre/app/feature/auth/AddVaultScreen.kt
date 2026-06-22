@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.*
+import androidx.compose.ui.res.painterResource
+import com.spectre.app.core.ui.components.SpectreCard
 
 /**
  * First screen the user ever sees.
@@ -26,25 +28,24 @@ fun AddVaultScreen(
     onBitwardenEu: () -> Unit,
     onSelfHosted: () -> Unit,
     onKeePass: () -> Unit,
+    onLocalVault: () -> Unit,
 ) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
-                Brush.radialGradient(
+                androidx.compose.ui.graphics.Brush.radialGradient(
                     colors = listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-                        Color.Transparent,
-                    ),
-                    radius = 1000f,
+                        MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
+                        MaterialTheme.colorScheme.background
+                    )
                 )
-            ),
-        contentAlignment = Alignment.Center,
+            )
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 28.dp)
+                .fillMaxSize()
+                .padding(24.dp)
                 .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -52,9 +53,9 @@ fun AddVaultScreen(
 
             // Branding
             Icon(
-                imageVector       = Icons.Filled.Security,
+                painter           = painterResource(com.spectre.app.R.drawable.ic_launcher_foreground),
                 contentDescription = null,
-                modifier          = Modifier.size(72.dp),
+                modifier          = Modifier.size(128.dp),
                 tint              = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.height(16.dp))
@@ -119,6 +120,14 @@ fun AddVaultScreen(
                 tint    = Color(0xFF4CAF50),
                 onClick = onKeePass,
             )
+            Spacer(Modifier.height(10.dp))
+            ProviderCard(
+                painter = androidx.compose.ui.res.painterResource(com.spectre.app.R.drawable.ic_person_placeholder),
+                title   = "Local Vault",
+                subtitle = "Purely offline, zero-knowledge vault stored locally",
+                tint    = MaterialTheme.colorScheme.secondary,
+                onClick = onLocalVault,
+            )
 
             Spacer(Modifier.height(48.dp))
 
@@ -136,20 +145,19 @@ fun AddVaultScreen(
 
 @Composable
 private fun ProviderCard(
-    icon: ImageVector,
+    icon: ImageVector? = null,
+    painter: androidx.compose.ui.graphics.painter.Painter? = null,
     title: String,
     subtitle: String,
     tint: Color,
     onClick: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape    = RoundedCornerShape(16.dp),
-        color    = MaterialTheme.colorScheme.surfaceContainerLow,
-        border   = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)),
+    SpectreCard(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        padding = 16.dp
     ) {
         Row(
-            modifier          = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -158,7 +166,11 @@ private fun ProviderCard(
                     .background(tint.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+                if (painter != null) {
+                    Icon(painter, null, tint = tint, modifier = Modifier.size(22.dp))
+                } else if (icon != null) {
+                    Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
+                }
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {

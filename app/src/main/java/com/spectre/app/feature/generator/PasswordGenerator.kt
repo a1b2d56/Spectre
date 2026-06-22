@@ -1,5 +1,9 @@
 package com.spectre.app.feature.generator
 
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.random.Random
@@ -40,7 +44,9 @@ data class GeneratedResult(
 )
 
 @Singleton
-class PasswordGenerator @Inject constructor() {
+class PasswordGenerator @Inject constructor(
+    @param:ApplicationContext private val context: Context
+) {
 
     companion object {
         private const val UPPERCASE   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -48,7 +54,18 @@ class PasswordGenerator @Inject constructor() {
         private const val NUMBERS     = "0123456789"
         private const val SYMBOLS     = "!@#\$%^&*"
         private const val AMBIGUOUS   = "0Ol1I"
-        private val WORDLIST          = EFF_LARGE_WORDLIST
+    }
+
+    private val loadedWordlist: List<String> by lazy {
+        runCatching {
+            context.resources.openRawResource(com.spectre.app.R.raw.wordlist_en_eff).use { inputStream ->
+                BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8)).useLines { lines ->
+                    lines.filter { it.isNotBlank() }.toList()
+                }
+            }
+        }.getOrElse {
+            EFF_LARGE_WORDLIST
+        }
     }
 
     fun generate(config: GeneratorConfig): GeneratedResult {
@@ -93,8 +110,9 @@ class PasswordGenerator @Inject constructor() {
     }
 
     private fun generatePassphrase(config: GeneratorConfig): String {
+        val wordList = loadedWordlist
         val words = (0 until config.wordCount).map {
-            val word = WORDLIST.random()
+            val word = wordList.random()
             if (config.capitalizeWords) word.replaceFirstChar { it.uppercase() } else word
         }.toMutableList()
 

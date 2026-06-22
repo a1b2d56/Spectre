@@ -86,6 +86,10 @@ class TotpEngine @Inject constructor() {
     }
 
     private fun hotp(secret: ByteArray, counter: Long, digits: Int, algo: String): String {
+        if (algo.uppercase() == "MD5") {
+            throw IllegalArgumentException("MD5 algorithm is not supported for security reasons.")
+        }
+
         val msg = ByteArray(8)
         for (i in 7 downTo 0) {
             msg[i] = (counter shr ((7 - i) * 8) and 0xFF).toByte()
@@ -101,7 +105,14 @@ class TotpEngine @Inject constructor() {
         val hash = ByteArray(hmac.macSize)
         hmac.doFinal(hash, 0)
 
+        if (hash.size < 20) {
+            throw IllegalArgumentException("HMAC output too short for secure truncation.")
+        }
+
         val offset = (hash.last().toInt() and 0x0F)
+        if (offset + 3 >= hash.size) {
+            throw IllegalArgumentException("Invalid offset for dynamic truncation.")
+        }
         val code   = ((hash[offset].toInt() and 0x7F) shl 24) or
                      ((hash[offset + 1].toInt() and 0xFF) shl 16) or
                      ((hash[offset + 2].toInt() and 0xFF) shl 8) or

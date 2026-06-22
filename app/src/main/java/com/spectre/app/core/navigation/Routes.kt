@@ -26,10 +26,18 @@ sealed class Route {
     data object Settings : Route()
 
     @Serializable
+    data object About : Route()
+
+    @Serializable
     data object Auth : Route()
 
     @Serializable
-    data object Login : Route()
+    data class Login(
+        val serverLabel: String = "Bitwarden",
+        val serverUrl: String = "https://api.bitwarden.com",
+        val identityUrl: String = "https://identity.bitwarden.com",
+        val useCustomServer: Boolean = false
+    ) : Route()
 
     @Serializable
     data class Unlock(val accountId: String) : Route()

@@ -36,6 +36,7 @@ import com.spectre.app.core.data.repository.VaultRepository
 import com.spectre.app.core.security.LockState
 import com.spectre.app.core.security.VaultSession
 import com.spectre.app.core.ui.theme.SpectreTheme
+import com.spectre.app.core.ui.theme.SpectreAppTheme
 import com.spectre.app.core.navigation.Route
 import com.spectre.app.navigation.*
 import dagger.hilt.android.AndroidEntryPoint
@@ -65,10 +66,10 @@ class MainViewModel @Inject constructor(
         session.lockState,
     ) { s: com.spectre.app.core.data.datastore.SpectreSettings, lock: com.spectre.app.core.security.LockState ->
         when {
-            s.activeAccountId == null  -> Route.CreateLocalVault
+            s.activeAccountId == null  -> Route.Auth
             lock == LockState.UNLOCKED -> Route.Vault
             lock == LockState.LOCKED   -> Route.Unlock(s.activeAccountId)
-            else                       -> Route.CreateLocalVault
+            else                       -> Route.Auth
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -184,7 +185,12 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 val saveDomain = intent?.getStringExtra("save_domain")
                 val savePackage = intent?.getStringExtra("save_package")
 
-                SpectreTheme(appTheme = settings.theme) {
+                SpectreAppTheme(
+                    appTheme = settings.theme,
+                    fontScale = settings.fontScale,
+                    isBold = settings.isBold,
+                    fontFamilyKey = settings.fontFamily
+                ) {
                     AutofillSavePrompt(
                         username = saveUsername,
                         password = savePassword,
@@ -199,11 +205,23 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
                 return@setContent
             }
 
-            SpectreTheme(appTheme = settings.theme) {
+            val openPage = intent?.getStringExtra("open_page")
+
+            SpectreAppTheme(
+                appTheme = settings.theme,
+                fontScale = settings.fontScale,
+                isBold = settings.isBold,
+                fontFamilyKey = settings.fontFamily
+            ) {
                 val start = startDestination
                 val account by vm.activeAccount.collectAsStateWithLifecycle()
                 if (start != null) {
-                    SpectreApp(startDestination = start, settings = settings, activeAccount = account)
+                    SpectreApp(
+                        startDestination = start,
+                        settings = settings,
+                        activeAccount = account,
+                        initialPage = openPage
+                    )
                 }
             }
         }
@@ -236,22 +254,28 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
 }
 
 @Composable
-fun SpectreApp(startDestination: Route, settings: SpectreSettings, activeAccount: Account?) {
+fun SpectreApp(
+    startDestination: Route,
+    settings: SpectreSettings,
+    activeAccount: Account?,
+    initialPage: String? = null
+) {
     val navController = rememberNavController()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0)
     ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
                 .background(MaterialTheme.colorScheme.background),
         ) {
             SpectreNavGraph(
                 navController    = navController,
                 startDestination = startDestination,
-                activeAccount    = activeAccount
+                activeAccount    = activeAccount,
+                initialPage      = initialPage
             )
         }
     }

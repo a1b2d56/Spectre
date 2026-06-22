@@ -153,6 +153,7 @@ fun VaultScreen(
 
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar   = {
             TopAppBar(
                 title = {
@@ -262,7 +263,7 @@ fun VaultScreen(
                     modifier = Modifier.fillMaxSize(),
                 )
                 else -> LazyColumn(
-                    contentPadding = PaddingValues(bottom = 120.dp),
+                    contentPadding = PaddingValues(bottom = 110.dp),
                 ) {
                     items(state.ciphers, key = { it.id }) { cipher ->
                         CipherListItem(

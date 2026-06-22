@@ -2,6 +2,7 @@ package com.spectre.app.feature.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
+import kotlin.math.roundToInt
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,6 +14,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import com.spectre.app.core.ui.theme.dynamic
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -20,6 +23,11 @@ import androidx.compose.ui.unit.*
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.lifecycle.viewModelScope
 import com.spectre.app.core.data.datastore.*
 import com.spectre.app.core.data.models.UriMatchType
@@ -43,6 +51,7 @@ class SettingsViewModel @Inject constructor(
     private val session: VaultSession,
     private val vaultRepository: com.spectre.app.core.data.repository.VaultRepository,
     val biometricUnlock: com.spectre.app.core.security.BiometricUnlock,
+    private val backupRunner: com.spectre.app.core.backup.BackupRunner,
 ) : ViewModel() {
 
     val settings: StateFlow<SpectreSettings> = prefs.settings
@@ -61,6 +70,9 @@ class SettingsViewModel @Inject constructor(
     fun setTheme(t: SpectreTheme)              = viewModelScope.launch { prefs.setTheme(t) }
     fun setLockTimeout(t: LockTimeout)         = viewModelScope.launch { prefs.setLockTimeout(t) }
     fun setLockOnBackground(v: Boolean)        = viewModelScope.launch { prefs.setLockOnBackground(v) }
+    fun setFontScale(s: Float)                 = viewModelScope.launch { prefs.setFontScale(s) }
+    fun setIsBold(b: Boolean)                  = viewModelScope.launch { prefs.setIsBold(b) }
+    fun setFontFamily(f: String)               = viewModelScope.launch { prefs.setFontFamily(f) }
     
     fun setBiometricUnlock(v: Boolean, activity: androidx.fragment.app.FragmentActivity? = null, masterPassword: String? = null) {
         viewModelScope.launch {
@@ -97,6 +109,8 @@ class SettingsViewModel @Inject constructor(
     fun setAfAutoSave(v: Boolean)              = viewModelScope.launch { prefs.setAfAutoSave(v) }
     fun setAfAskSave(v: Boolean)               = viewModelScope.launch { prefs.setAfAskSave(v) }
     fun setAfMatchDetection(m: UriMatchType)   = viewModelScope.launch { prefs.setAfMatchDetection(m) }
+    fun setAfBlacklist(uris: Set<String>)      = viewModelScope.launch { prefs.setAfBlacklist(uris) }
+    fun setAfPrivilegedApps(pkgs: Set<String>) = viewModelScope.launch { prefs.setAfPrivilegedApps(pkgs) }
 
     fun setWtHibp(v: Boolean)                  = viewModelScope.launch { prefs.setWtHibp(v) }
     fun setWtReused(v: Boolean)                = viewModelScope.launch { prefs.setWtReused(v) }
@@ -111,6 +125,54 @@ class SettingsViewModel @Inject constructor(
     fun setPanicPin(pin: String)               = viewModelScope.launch { prefs.setPanicPin(pin); _snackbar.emit("Panic PIN set") }
     fun clearPanicPin()                        = viewModelScope.launch { prefs.setPanicPin(null); _snackbar.emit("Panic PIN removed") }
     fun purgeTrash()                           = viewModelScope.launch { vaultRepository.purgeTrash() }
+
+    fun setSshAgentEnabled(v: Boolean) = viewModelScope.launch { prefs.setSshAgentEnabled(v); _snackbar.emit(if (v) "SSH Agent enabled" else "SSH Agent disabled") }
+    fun setLinkCleanerEnabled(v: Boolean) = viewModelScope.launch { prefs.setLinkCleanerEnabled(v); _snackbar.emit(if (v) "Link Cleaner enabled" else "Link Cleaner disabled") }
+    fun setBackupEnabled(v: Boolean) = viewModelScope.launch { 
+        prefs.setBackupEnabled(v)
+        _snackbar.emit(if (v) "Automatic backups enabled" else "Automatic backups disabled")
+    }
+    fun setBackupLocalPath(path: String) = viewModelScope.launch { prefs.setBackupLocalPath(path) }
+    fun setBackupWebDavUrl(url: String) = viewModelScope.launch { prefs.setBackupWebDavUrl(url) }
+    fun setBackupWebDavUsername(u: String) = viewModelScope.launch { prefs.setBackupWebDavUsername(u) }
+    fun setBackupWebDavPassword(p: String) = viewModelScope.launch { prefs.setBackupWebDavPassword(p) }
+    fun setBackupIntervalHours(h: Int) = viewModelScope.launch { prefs.setBackupIntervalHours(h) }
+    fun setBackupPassword(p: String) = viewModelScope.launch { prefs.setBackupPassword(p) }
+
+    fun runBackup() {
+        viewModelScope.launch {
+            val accountId = session.activeAccountId
+            if (accountId == null) {
+                _snackbar.emit("Cannot run backup: No active account")
+                return@launch
+            }
+            if (session.lockState.value != com.spectre.app.core.security.LockState.UNLOCKED) {
+                _snackbar.emit("Cannot run backup: Vault is locked")
+                return@launch
+            }
+            _snackbar.emit("Starting backup...")
+            val settings = prefs.settings.first()
+            val backupPassword = if (settings.backupPassword.isNotEmpty()) {
+                settings.backupPassword
+            } else {
+                session.getUserKey().encKey.joinToString("") { "%02x".format(it) }
+            }
+            val result = backupRunner.runBackup(
+                accountId = accountId,
+                backupPassword = backupPassword,
+                destFolderUri = settings.backupLocalPath.takeIf { it.isNotEmpty() },
+                webDavUrl = settings.backupWebDavUrl.takeIf { it.isNotEmpty() },
+                webDavUser = settings.backupWebDavUsername.takeIf { it.isNotEmpty() },
+                webDavPassword = settings.backupWebDavPassword.takeIf { it.isNotEmpty() }
+            )
+            if (result.isSuccess) {
+                _snackbar.emit(result.getOrNull() ?: "Backup completed successfully")
+            } else {
+                _snackbar.emit("Backup failed: ${result.exceptionOrNull()?.message}")
+            }
+        }
+    }
+
 
     fun exportVault(context: android.content.Context) {
         viewModelScope.launch {
@@ -160,7 +222,7 @@ class SettingsViewModel @Inject constructor(
 /**
  * Settings screens categorized by functional area.
  */
-enum class SettingsSubScreen { HUB, AUTOFILL, SECURITY, APPEARANCE, WATCHTOWER, OTHER }
+enum class SettingsSubScreen { HUB, AUTOFILL, SECURITY, APPEARANCE, WATCHTOWER, OTHER, BACKUPS }
 
 @Composable
 fun SettingsScreen(
@@ -229,15 +291,28 @@ fun SettingsScreen(
                     onBack = { subScreen = SettingsSubScreen.HUB },
                     vm = vm
                 )
+                SettingsSubScreen.BACKUPS -> BackupsSettingsScreen(
+                    settings = settings,
+                    onBack = { subScreen = SettingsSubScreen.HUB },
+                    vm = vm
+                )
             }
         }
         
         SnackbarHost(
             hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp)
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 100.dp),
+            snackbar = { SpectreSnackbar(it) }
         )
     }
 }
+
+data class HubOption(
+    val title: String,
+    val subtitle: String,
+    val icon: ImageVector,
+    val subScreen: SettingsSubScreen
+)
 
 @Composable
 private fun SettingsHub(
@@ -246,17 +321,74 @@ private fun SettingsHub(
     onNavigate: (SettingsSubScreen) -> Unit,
     onAddAccount: () -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
+    var isSearching by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val hubOptions = remember {
+        listOf(
+            HubOption("Autofill", "Android Autofill & Credential Manager", Icons.Default.AutoAwesome, SettingsSubScreen.AUTOFILL),
+            HubOption("Security", "Biometrics, change password, lock…", Icons.Default.Lock, SettingsSubScreen.SECURITY),
+            HubOption("Watchtower", "Compromised services, vulnerabilities…", Icons.Default.GppGood, SettingsSubScreen.WATCHTOWER),
+            HubOption("Appearance", "Language, theme and animations…", Icons.Default.Palette, SettingsSubScreen.APPEARANCE),
+            HubOption("Backups & SSH", "Database export, WebDAV, SSH agent…", Icons.Default.Backup, SettingsSubScreen.BACKUPS),
+            HubOption("Other", "Community websites, app info…", Icons.Default.Info, SettingsSubScreen.OTHER),
+        )
+    }
+
+    val filteredOptions = remember(searchQuery, hubOptions) {
+        if (searchQuery.isBlank()) {
+            hubOptions
+        } else {
+            hubOptions.filter {
+                it.title.contains(searchQuery, ignoreCase = true) ||
+                it.subtitle.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            SpectreTopBar(
-                title = "Settings",
-                actions = {
-                    IconButton(onClick = { /* TODO: Search */ }) {
-                        Icon(Icons.Default.Search, "Search settings")
+            if (isSearching) {
+                SpectreTopBar(
+                    title = "",
+                    navigationIcon = {
+                        IconButton(onClick = { 
+                            isSearching = false
+                            searchQuery = ""
+                        }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Cancel Search")
+                        }
+                    },
+                    actions = {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search settings…") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().padding(end = 16.dp),
+                            trailingIcon = {
+                                if (searchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, "Clear")
+                                    }
+                                }
+                            }
+                        )
                     }
-                }
-            )
+                )
+            } else {
+                SpectreTopBar(
+                    title = "Settings",
+                    actions = {
+                        IconButton(onClick = { isSearching = true }) {
+                            Icon(Icons.Default.Search, "Search settings")
+                        }
+                    }
+                )
+            }
         }
     ) { padding ->
         Column(
@@ -264,44 +396,55 @@ private fun SettingsHub(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-                .padding(bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            // Account Status Section
-            val activeAccount = accounts.find { it.isActive }
-            if (activeAccount != null) {
-                SettingsCategoryHeader("VAULT STATUS")
-                SpectreCard {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(4.dp)) {
-                        Box(
-                            Modifier.size(44.dp).background(
-                                if (activeAccount.premium || activeAccount.isLocal) MaterialTheme.colorScheme.primary.copy(0.12f)
-                                else MaterialTheme.colorScheme.secondary.copy(0.1f),
-                                RoundedCornerShape(12.dp)
-                            ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                if (activeAccount.premium || activeAccount.isLocal) Icons.Default.Star 
-                                else Icons.Default.Person, 
-                                null, 
-                                tint = if (activeAccount.premium || activeAccount.isLocal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
-                            )
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        Column(Modifier.weight(1f)) {
-                            val statusTitle = when {
-                                activeAccount.isLocal -> "Local Vault"
-                                activeAccount.premium -> "Premium Account"
-                                else -> "Standard Account"
+            // Account Status Section (only show when not searching)
+            if (!isSearching) {
+                val activeAccount = accounts.find { it.isActive }
+                if (activeAccount != null) {
+                    SettingsCategoryHeader("VAULT STATUS")
+                    SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(4.dp)) {
+                            Box(
+                                Modifier.size(44.dp).background(
+                                    if (activeAccount.premium || activeAccount.isLocal) MaterialTheme.colorScheme.primary.copy(0.12f)
+                                    else MaterialTheme.colorScheme.secondary.copy(0.1f),
+                                    RoundedCornerShape(12.dp)
+                                ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    painter = painterResource(com.spectre.app.R.drawable.ic_person_placeholder),
+                                    contentDescription = null,
+                                    tint = if (activeAccount.premium || activeAccount.isLocal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(24.dp)
+                                )
                             }
-                            Text(statusTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text(activeAccount.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        if (!activeAccount.isLocal && !activeAccount.premium) {
-                            TextButton(onClick = { /* Open BW Premium page */ }) {
-                                Text("Upgrade")
+                            Spacer(Modifier.width(16.dp))
+                            Column(Modifier.weight(1f)) {
+                                val statusTitle = when {
+                                    activeAccount.isLocal -> "Local Vault"
+                                    activeAccount.premium -> "Premium Account"
+                                    else -> "Standard Account"
+                                }
+                                Text(statusTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(activeAccount.email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (!activeAccount.isLocal && !activeAccount.premium) {
+                                TextButton(onClick = { uriHandler.openUri("https://bitwarden.com/pricing/") }) {
+                                    Text("Upgrade")
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            IconButton(onClick = onAddAccount) {
+                                Icon(
+                                    imageVector = Icons.Default.PersonAdd,
+                                    contentDescription = "Switch or Add Account",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
                             }
                         }
                     }
@@ -309,43 +452,27 @@ private fun SettingsHub(
             }
 
             // Options Section
-            SettingsCategoryHeader("OPTIONS")
-            SpectreCard {
-                Column {
-                    HubItem(
-                        title = "Autofill",
-                        subtitle = "Android Autofill & Credential Manager",
-                        icon = Icons.Default.AutoAwesome,
-                        onClick = { onNavigate(SettingsSubScreen.AUTOFILL) }
-                    )
-                    HubDivider()
-                    HubItem(
-                        title = "Security",
-                        subtitle = "Biometrics, change password, lock…",
-                        icon = Icons.Default.Lock,
-                        onClick = { onNavigate(SettingsSubScreen.SECURITY) }
-                    )
-                    HubDivider()
-                    HubItem(
-                        title = "Watchtower",
-                        subtitle = "Compromised services, vulnerabilities…",
-                        icon = Icons.Default.GppGood,
-                        onClick = { onNavigate(SettingsSubScreen.WATCHTOWER) }
-                    )
-                    HubDivider()
-                    HubItem(
-                        title = "Appearance",
-                        subtitle = "Language, theme and animations…",
-                        icon = Icons.Default.Palette,
-                        onClick = { onNavigate(SettingsSubScreen.APPEARANCE) }
-                    )
-                    HubDivider()
-                    HubItem(
-                        title = "Other",
-                        subtitle = "Community websites, app info…",
-                        icon = Icons.Default.Info,
-                        onClick = { onNavigate(SettingsSubScreen.OTHER) }
-                    )
+            if (filteredOptions.isNotEmpty()) {
+                SettingsCategoryHeader(if (isSearching) "SEARCH RESULTS" else "OPTIONS")
+                SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Column {
+                        filteredOptions.forEachIndexed { index, option ->
+                            if (index > 0) HubDivider()
+                            HubItem(
+                                title = option.title,
+                                subtitle = option.subtitle,
+                                icon = option.icon,
+                                onClick = { onNavigate(option.subScreen) }
+                            )
+                        }
+                    }
+                }
+            } else if (isSearching) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No settings found for \"$searchQuery\"", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -360,9 +487,12 @@ private fun AutofillSettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val isAutofillActive by vm.isAutofillEnabled.collectAsStateWithLifecycle()
     var showMatchPicker by remember { mutableStateOf(false) }
     var showOtpDurPicker by remember { mutableStateOf(false) }
+    var showBlockDialog by remember { mutableStateOf(false) }
+    var showPrivilegedDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         vm.checkAutofillStatus(context)
@@ -371,6 +501,7 @@ private fun AutofillSettingsScreen(
     Scaffold(
         modifier = modifier,
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             SpectreTopBar(
                 title = "Autofill",
@@ -385,12 +516,13 @@ private fun AutofillSettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-                .padding(bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             // Status Card (KeyGuard-style)
             SpectreCard(
+                modifier = Modifier.padding(vertical = 8.dp),
                 containerColor = if (isAutofillActive) MaterialTheme.colorScheme.primaryContainer.copy(0.3f) 
                                 else MaterialTheme.colorScheme.errorContainer.copy(0.1f)
             ) {
@@ -421,7 +553,7 @@ private fun AutofillSettingsScreen(
                 }
             }
 
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsSwitchItem(
                         title = "Credential provider",
@@ -442,7 +574,7 @@ private fun AutofillSettingsScreen(
             }
 
             // Info Card for Chrome
-            SpectreCard(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)) {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp), containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)) {
                 Row(verticalAlignment = Alignment.Top) {
                     Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(12.dp))
@@ -457,13 +589,13 @@ private fun AutofillSettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = { /* TODO: Open Link */ }) {
+                    IconButton(onClick = { uriHandler.openUri("https://support.google.com/chrome/answer/14264627") }) {
                         Icon(Icons.AutoMirrored.Filled.OpenInNew, null, modifier = Modifier.size(18.dp))
                     }
                 }
             }
 
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsItem(
                         title = "Default match detection",
@@ -513,7 +645,7 @@ private fun AutofillSettingsScreen(
                 }
             }
 
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsSwitchItem(
                         title = "Ask to save data",
@@ -534,18 +666,38 @@ private fun AutofillSettingsScreen(
                         title = "Block autofill",
                         subtitle = "Prevents offering autofill for these URIs",
                         icon = Icons.Default.Block,
-                        onClick = { /* TODO */ }
+                        onClick = { showBlockDialog = true }
                     )
                     HubDivider()
                     SettingsItem(
                         title = "Privileged apps",
                         subtitle = "Privileged apps can make credential requests on behalf of other services",
                         icon = Icons.Default.Apps,
-                        onClick = { /* TODO */ }
+                        onClick = { showPrivilegedDialog = true }
                     )
                 }
             }
         }
+    }
+
+    if (showBlockDialog) {
+        ListManagerDialog(
+            title = "Block Autofill URIs",
+            items = settings.autofillBlacklist,
+            placeholder = "Enter domain (e.g. google.com)",
+            onSave = vm::setAfBlacklist,
+            onDismiss = { showBlockDialog = false }
+        )
+    }
+
+    if (showPrivilegedDialog) {
+        ListManagerDialog(
+            title = "Privileged Apps",
+            items = settings.autofillPrivilegedApps,
+            placeholder = "Enter package name (e.g. com.android.chrome)",
+            onSave = vm::setAfPrivilegedApps,
+            onDismiss = { showPrivilegedDialog = false }
+        )
     }
 
     if (showMatchPicker) {
@@ -588,6 +740,7 @@ private fun SecuritySettingsScreen(
     Scaffold(
         modifier = modifier,
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             SpectreTopBar(
                 title = "Security",
@@ -602,11 +755,11 @@ private fun SecuritySettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-                .padding(bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsItem(
                         title = "Lock vault now",
@@ -650,7 +803,7 @@ private fun SecuritySettingsScreen(
                 )
             }
 
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsSwitchItem(
                         title = "Screenshot protection",
@@ -669,7 +822,7 @@ private fun SecuritySettingsScreen(
                 }
             }
 
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsSwitchItem(
                         title = "Duress / decoy vault",
@@ -733,10 +886,13 @@ private fun AppearanceSettingsScreen(
 ) {
     var showThemePicker by remember { mutableStateOf(false) }
     var showSortPicker by remember { mutableStateOf(false) }
+    var showFontFamilyPicker by remember { mutableStateOf(false) }
+    val view = LocalView.current
 
     Scaffold(
         modifier = modifier,
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             SpectreTopBar(
                 title = "Appearance",
@@ -751,11 +907,12 @@ private fun AppearanceSettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-                .padding(bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            SpectreCard {
+            // Card 1: Typography & Theme
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsItem(
                         title = "Theme",
@@ -764,6 +921,49 @@ private fun AppearanceSettingsScreen(
                         onClick = { showThemePicker = true }
                     )
                     HubDivider()
+                    SettingsItem(
+                        title = "Font Family",
+                        subtitle = when(settings.fontFamily) {
+                            "figtree" -> "Figtree"
+                            "outfit" -> "Outfit"
+                            else -> "System Default"
+                        },
+                        icon = Icons.Default.FontDownload,
+                        onClick = { showFontFamilyPicker = true }
+                    )
+                    HubDivider()
+                    SettingsItem(
+                        title = "Font Size",
+                        subtitle = listOf("S", "M", "L", "XL").getOrNull(listOf(0.85f, 1.0f, 1.15f, 1.30f).indexOf(settings.fontScale)) ?: "M",
+                        icon = Icons.Default.FormatSize
+                    )
+                    val fontScales = listOf(0.85f, 1.0f, 1.15f, 1.30f)
+                    Slider(
+                        value = fontScales.indexOf(settings.fontScale).toFloat().coerceAtLeast(0f),
+                        onValueChange = { newValue ->
+                            val newIdx = newValue.roundToInt()
+                            if (newIdx in fontScales.indices && fontScales[newIdx] != settings.fontScale) {
+                                vm.setFontScale(fontScales[newIdx])
+                                view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                        },
+                        valueRange = 0f..(fontScales.size - 1).toFloat(),
+                        steps = fontScales.size - 2,
+                        modifier = Modifier.padding(horizontal = 24.dp)
+                    )
+                    HubDivider()
+                    SettingsSwitchItem(
+                        title = "Bold Text",
+                        icon = Icons.Default.FormatBold,
+                        checked = settings.isBold,
+                        onChange = vm::setIsBold
+                    )
+                }
+            }
+
+            // Card 2: Layout Options
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
+                Column {
                     SettingsSwitchItem(
                         title = "Compact vault list",
                         icon = Icons.AutoMirrored.Filled.ViewList,
@@ -800,9 +1000,9 @@ private fun AppearanceSettingsScreen(
     if (showThemePicker) {
         PickerDialog(
             title = "Choose Theme",
-            options = SpectreTheme.entries.map { it.toString().lowercase().replaceFirstChar { c -> c.uppercase() } },
-            selectedIndex = SpectreTheme.entries.indexOf(settings.theme),
-            onSelect = { vm.setTheme(SpectreTheme.entries[it]); showThemePicker = false },
+            options = com.spectre.app.core.ui.theme.SpectreTheme.entries.map { it.toString().lowercase().replaceFirstChar { c -> c.uppercase() } },
+            selectedIndex = com.spectre.app.core.ui.theme.SpectreTheme.entries.indexOf(settings.theme),
+            onSelect = { vm.setTheme(com.spectre.app.core.ui.theme.SpectreTheme.entries[it]); showThemePicker = false },
             onDismiss = { showThemePicker = false }
         )
     }
@@ -814,6 +1014,24 @@ private fun AppearanceSettingsScreen(
             selectedIndex = VaultSortOrder.entries.indexOf(settings.sortOrder),
             onSelect = { vm.setSortOrder(VaultSortOrder.entries[it]); showSortPicker = false },
             onDismiss = { showSortPicker = false }
+        )
+    }
+
+    if (showFontFamilyPicker) {
+        val fontFamilies = listOf(
+            "default" to "System Default",
+            "figtree" to "Figtree",
+            "outfit" to "Outfit"
+        )
+        PickerDialog(
+            title = "Choose Font Family",
+            options = fontFamilies.map { it.second },
+            selectedIndex = fontFamilies.indexOfFirst { it.first == settings.fontFamily }.coerceAtLeast(0),
+            onSelect = { 
+                vm.setFontFamily(fontFamilies[it].first)
+                showFontFamilyPicker = false 
+            },
+            onDismiss = { showFontFamilyPicker = false }
         )
     }
 }
@@ -828,6 +1046,7 @@ private fun WatchtowerSettingsScreen(
     Scaffold(
         modifier = modifier,
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             SpectreTopBar(
                 title = "Watchtower",
@@ -842,11 +1061,11 @@ private fun WatchtowerSettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-                .padding(bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsSwitchItem(
                         title = "Check breached sites (HIBP)",
@@ -885,6 +1104,7 @@ private fun OtherSettingsScreen(
     vm: SettingsViewModel,
     modifier: Modifier = Modifier
 ) {
+    val uriHandler = LocalUriHandler.current
     var showSyncPicker by remember { mutableStateOf(false) }
     var showServerUrlDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
@@ -893,6 +1113,7 @@ private fun OtherSettingsScreen(
     Scaffold(
         modifier = modifier,
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             SpectreTopBar(
                 title = "Other",
@@ -907,12 +1128,12 @@ private fun OtherSettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 12.dp)
-                .padding(bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
             SettingsCategoryHeader("SYNC")
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsItem(
                         title = "Background sync interval",
@@ -931,7 +1152,7 @@ private fun OtherSettingsScreen(
             }
 
             SettingsCategoryHeader("DATA")
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsItem(
                         title = "Export Vault",
@@ -944,7 +1165,7 @@ private fun OtherSettingsScreen(
                     SettingsItem(
                         title = "Purge Trash",
                         icon = Icons.Default.DeleteForever,
-                        tint = MaterialTheme.colorScheme.error,
+                        iconColor = MaterialTheme.colorScheme.error,
                         onClick = { showPurgeConfirm = true }
                     )
                     if (showPurgeConfirm) {
@@ -961,22 +1182,42 @@ private fun OtherSettingsScreen(
                 }
             }
 
+            SettingsCategoryHeader("LINK CLEANER")
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
+                Column {
+                    SettingsSwitchItem(
+                        title = "Enable Link Cleaner",
+                        subtitle = "Strip tracking parameters from URLs natively",
+                        icon = Icons.Default.Link,
+                        checked = settings.linkCleanerEnabled,
+                        onChange = { vm.setLinkCleanerEnabled(it) }
+                    )
+                }
+            }
+
             SettingsCategoryHeader("ABOUT")
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 Column {
                     SettingsItem(title = "Version", subtitle = com.spectre.app.BuildConfig.VERSION_NAME, icon = Icons.Default.Info)
                     HubDivider()
-                    SettingsItem(title = "GitHub", subtitle = "View source code", icon = Icons.Default.Code)
+                    SettingsItem(
+                        title = "GitHub",
+                        subtitle = "View source code",
+                        icon = Icons.Default.Code,
+                        onClick = { uriHandler.openUri("https://github.com/a1b2d56/Spectre") }
+                    )
                 }
             }
 
             SettingsCategoryHeader("ACCOUNT")
-            SpectreCard {
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
                 accounts.forEach { account ->
+                    val isAccountLocal = account.isLocal || account.email.endsWith("@local")
                     SettingsItem(
                         title = account.email,
                         subtitle = if (account.isActive) "Active" else "Switch to this account",
-                        icon = Icons.Default.AccountCircle,
+                        painter = if (isAccountLocal) painterResource(com.spectre.app.R.drawable.ic_person_placeholder) else null,
+                        icon = if (isAccountLocal) null else Icons.Default.AccountCircle,
                         onClick = { if (!account.isActive) vm.switchAccount(account.id) },
                         trailing = {
                             if (account.isActive) {
@@ -1064,44 +1305,76 @@ private fun HubItem(
     title: String,
     subtitle: String,
     icon: ImageVector,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    iconColor: Color = MaterialTheme.colorScheme.primary
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = 16.dp, horizontal = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.size(40.dp).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
+            modifier = Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(iconColor.copy(alpha = 0.12f)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(20.dp)
+            )
         }
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(modifier = Modifier.width(16.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold.dynamic()
+            )
+            if (subtitle.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
         }
-        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), modifier = Modifier.size(20.dp))
+        Icon(
+            imageVector = Icons.Default.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.size(16.dp)
+        )
     }
 }
 
 @Composable
 private fun HubDivider() {
-    HorizontalDivider(modifier = Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+    HorizontalDivider(
+        modifier = Modifier.padding(start = 68.dp, end = 16.dp),
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    )
 }
 
 @Composable
 private fun SettingsCategoryHeader(title: String) {
     Text(
-        text = title,
+        text = title.uppercase(),
         style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 1.sp,
-        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp)
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.SemiBold.dynamic(),
+        letterSpacing = 0.06.em,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 0.dp, end = 0.dp, top = 20.dp, bottom = 6.dp),
     )
 }
 
@@ -1110,7 +1383,8 @@ private fun SettingsItem(
     title: String,
     subtitle: String? = null,
     icon: ImageVector? = null,
-    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    painter: androidx.compose.ui.graphics.painter.Painter? = null,
+    iconColor: Color = MaterialTheme.colorScheme.primary,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
@@ -1118,23 +1392,62 @@ private fun SettingsItem(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        icon?.let {
-            Icon(it, null, tint = tint, modifier = Modifier.size(22.dp))
+        if (painter != null || icon != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(iconColor.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (painter != null) {
+                    Icon(
+                        painter = painter,
+                        contentDescription = null,
+                        tint = iconColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                } else if (icon != null) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
             Spacer(Modifier.width(16.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold.dynamic()
+            )
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
             }
         }
         if (trailing != null) {
+            Spacer(modifier = Modifier.width(16.dp))
             trailing()
         } else if (onClick != null) {
-            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
@@ -1144,6 +1457,7 @@ private fun SettingsSwitchItem(
     title: String,
     subtitle: String? = null,
     icon: ImageVector? = null,
+    iconColor: Color = MaterialTheme.colorScheme.primary,
     checked: Boolean,
     onChange: (Boolean) -> Unit,
 ) {
@@ -1151,17 +1465,41 @@ private fun SettingsSwitchItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onChange(!checked) }
-            .padding(16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         icon?.let {
-            Icon(it, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(iconColor.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = it,
+                    contentDescription = null,
+                    tint = iconColor,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             Spacer(Modifier.width(16.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold.dynamic()
+            )
             if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
             }
         }
         Switch(
@@ -1173,4 +1511,238 @@ private fun SettingsSwitchItem(
             )
         )
     }
+}
+
+@Composable
+private fun BackupsSettingsScreen(
+    settings: SpectreSettings,
+    onBack: () -> Unit,
+    vm: SettingsViewModel,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    
+    val folderPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }.onFailure {
+                // Non-fatal if folder doesn't support persistable permissions
+            }
+            vm.setBackupLocalPath(uri.toString())
+        }
+    }
+
+    Scaffold(
+        modifier = modifier,
+        containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = {
+            SpectreTopBar(
+                title = "Backups & SSH",
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)
+                .padding(bottom = 40.dp),
+            verticalArrangement = Arrangement.spacedBy(0.dp)
+        ) {
+            // SSH AGENT SECTION
+            SettingsCategoryHeader("SSH AGENT")
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
+                Column {
+                    SettingsSwitchItem(
+                        title = "Enable SSH Agent",
+                        subtitle = "Allow SSH clients in Termux to request signatures",
+                        checked = settings.sshAgentEnabled,
+                        onChange = { vm.setSshAgentEnabled(it) }
+                    )
+                }
+            }
+
+            // BACKUPS SECTION
+            SettingsCategoryHeader("AUTOMATIC BACKUPS")
+            SpectreCard(modifier = Modifier.padding(vertical = 8.dp)) {
+                Column {
+                    SettingsSwitchItem(
+                        title = "Enable Backups",
+                        subtitle = "Encrypt and export database periodically",
+                        checked = settings.backupEnabled,
+                        onChange = { vm.setBackupEnabled(it) }
+                    )
+                    
+                    if (settings.backupEnabled) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Local Storage Destination", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = if (settings.backupLocalPath.isEmpty()) "No local path selected" else settings.backupLocalPath,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = { folderPickerLauncher.launch(null) }) {
+                                Text("Choose Backup Folder")
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("WebDAV Cloud Storage", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            
+                            OutlinedTextField(
+                                value = settings.backupWebDavUrl,
+                                onValueChange = { vm.setBackupWebDavUrl(it) },
+                                label = { Text("WebDAV Server URL") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            
+                            OutlinedTextField(
+                                value = settings.backupWebDavUsername,
+                                onValueChange = { vm.setBackupWebDavUsername(it) },
+                                label = { Text("Username") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            OutlinedTextField(
+                                value = settings.backupWebDavPassword,
+                                onValueChange = { vm.setBackupWebDavPassword(it) },
+                                label = { Text("Password") },
+                                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Encryption Password (Optional)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text("By default, backups are encrypted using your master key. Set a custom password here if you prefer a separate key.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            
+                            OutlinedTextField(
+                                value = settings.backupPassword,
+                                onValueChange = { vm.setBackupPassword(it) },
+                                label = { Text("Backup Password") },
+                                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (settings.backupEnabled) {
+                Button(
+                    onClick = { vm.runBackup() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Run Backup Now")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ListManagerDialog(
+    title: String,
+    items: Set<String>,
+    placeholder: String,
+    onSave: (Set<String>) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var newItemText by remember { mutableStateOf("") }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Add new item input field
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = newItemText,
+                        onValueChange = { newItemText = it },
+                        placeholder = { Text(placeholder) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (newItemText.isNotBlank()) {
+                                onSave(items + newItemText.trim())
+                                newItemText = ""
+                            }
+                        }
+                    ) {
+                        Text("Add")
+                    }
+                }
+                
+                // List of current items
+                if (items.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(100.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No items added yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 200.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(items.toList()) { item ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(item, modifier = Modifier.weight(1f), overflow = TextOverflow.Ellipsis)
+                                IconButton(
+                                    onClick = { onSave(items - item) },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
 }

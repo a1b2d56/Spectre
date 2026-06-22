@@ -84,5 +84,63 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- ── SSH Agent Service & Receiver ────────────────────────────────── -->
+        <service
+            android:name=".core.sshagent.SshAgentService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <intent-filter>
+                <action android:name="com.artemchep.keyguard.android.sshagent.ACTION_RUN_ANDROID_SSH_AGENT" />
+            </intent-filter>
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="SSH Agent proxy bridge for Termux integrations." />
+        </service>
+
+        <receiver
+            android:name=".core.sshagent.SshAgentReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.artemchep.keyguard.android.sshagent.ACTION_RUN_ANDROID_SSH_AGENT" />
+            </intent-filter>
+        </receiver>
+
+        <activity
+            android:name=".core.sshagent.SshApprovalActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- ── Passkey / FIDO2 Activities (Android 14+) ──────────────────── -->
+        <activity
+            android:name=".feature.passkey.PasskeyCreateActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:launchMode="singleTop" />
+
+        <activity
+            android:name=".feature.passkey.PasskeyGetActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:launchMode="singleTop" />
+
+        <!-- ── Link Cleaner / Untracker Activities ────────────────────────── -->
+        <activity
+            android:name=".feature.untracker.UntrackActivity"
+            android:exported="true"
+            android:label="Link Cleaner"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
     </application>
 </manifest>

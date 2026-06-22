@@ -4,6 +4,8 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -19,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.*
 import androidx.compose.ui.unit.*
+import com.spectre.app.core.ui.components.SpectreCard
 import androidx.fragment.app.FragmentActivity
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -142,20 +145,43 @@ fun UnlockScreen(
             Spacer(Modifier.height(40.dp))
 
             if (canUseBiometrics) {
-                FilledTonalButton(
-                    onClick  = {
-                        vm.unlockWithBiometrics(accountId, context as androidx.fragment.app.FragmentActivity)
-                    },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape    = RoundedCornerShape(14.dp),
+                SpectreCard(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                    padding = 24.dp
                 ) {
-                    Icon(Icons.Filled.Fingerprint, null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Use Biometrics", style = MaterialTheme.typography.labelLarge)
-                }
-                Spacer(Modifier.height(16.dp))
-                TextButton(onClick = { showPwField = !showPwField }) {
-                    Text("Use master password instead")
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(68.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), CircleShape)
+                                .clickable {
+                                    vm.unlockWithBiometrics(accountId, context as androidx.fragment.app.FragmentActivity)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Fingerprint,
+                                contentDescription = "Unlock with Biometrics",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        TextButton(
+                            onClick = { showPwField = !showPwField },
+                            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text(
+                                text = if (showPwField) "Hide password field" else "Use master password instead",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
                 }
             }
 
@@ -164,45 +190,49 @@ fun UnlockScreen(
                 enter   = expandVertically() + fadeIn(),
                 exit    = shrinkVertically() + fadeOut(),
             ) {
-                Column {
-                    Spacer(Modifier.height(8.dp))
-                    // Incognito password field
-                    OutlinedTextField(
-                        value           = password,
-                        onValueChange   = { password = it },
-                        label           = { Text("Master Password") },
-                        leadingIcon     = { Icon(Icons.Filled.Key, null) },
-                        trailingIcon    = {
-                            IconButton(onClick = { showPassword = !showPassword }) {
-                                Icon(if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null)
-                            }
-                        },
-                        visualTransformation = if (showPassword) VisualTransformation.None
-                                               else PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Password,
-                            imeAction    = ImeAction.Done,
-                            autoCorrectEnabled  = false,
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = { vm.unlockWithPassword(accountId, password) }
-                        ),
-                        singleLine      = true,
-                        modifier        = Modifier.fillMaxWidth(),
-                        shape           = RoundedCornerShape(14.dp),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Button(
-                        onClick  = { vm.unlockWithPassword(accountId, password) },
-                        enabled  = password.isNotBlank() && !loading,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        shape    = RoundedCornerShape(14.dp),
+                com.spectre.app.core.ui.components.IncognitoInput {
+                    SpectreCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        padding = 16.dp
                     ) {
-                        if (loading)
-                            CircularProgressIndicator(Modifier.size(20.dp),
-                                color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                        else
-                            Text("Unlock", style = MaterialTheme.typography.labelLarge)
+                        // Incognito password field
+                        OutlinedTextField(
+                            value           = password,
+                            onValueChange   = { password = it },
+                            label           = { Text("Master Password") },
+                            leadingIcon     = { Icon(Icons.Filled.Key, null) },
+                            trailingIcon    = {
+                                IconButton(onClick = { showPassword = !showPassword }) {
+                                    Icon(if (showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null)
+                                }
+                            },
+                            visualTransformation = if (showPassword) VisualTransformation.None
+                                                   else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Password,
+                                imeAction    = ImeAction.Done,
+                                autoCorrectEnabled  = false,
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = { vm.unlockWithPassword(accountId, password) }
+                            ),
+                            singleLine      = true,
+                            modifier        = Modifier.fillMaxWidth(),
+                            shape           = RoundedCornerShape(14.dp),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick  = { vm.unlockWithPassword(accountId, password) },
+                            enabled  = password.isNotBlank() && !loading,
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            shape    = RoundedCornerShape(14.dp),
+                        ) {
+                            if (loading)
+                                CircularProgressIndicator(Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                            else
+                                Text("Unlock", style = MaterialTheme.typography.labelLarge)
+                        }
                     }
                 }
             }

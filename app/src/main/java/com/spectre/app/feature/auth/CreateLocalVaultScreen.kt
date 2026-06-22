@@ -24,6 +24,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.compose.ui.res.painterResource
 import com.spectre.app.core.data.repository.AuthRepository
 import com.spectre.app.core.data.repository.LoginResult
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -112,10 +113,11 @@ fun CreateLocalVaultScreen(
         ) {
             Spacer(Modifier.height(60.dp))
 
-            // Shield icon
+            // App icon
             Icon(
-                Icons.Filled.Security, null,
-                modifier = Modifier.size(64.dp),
+                painter = painterResource(com.spectre.app.R.drawable.ic_launcher_foreground),
+                contentDescription = null,
+                modifier = Modifier.size(112.dp),
                 tint = MaterialTheme.colorScheme.primary,
             )
 
@@ -157,56 +159,60 @@ fun CreateLocalVaultScreen(
 
             Spacer(Modifier.height(12.dp))
 
-            // Master password
-            OutlinedTextField(
-                value           = state.password,
-                onValueChange   = vm::onPasswordChange,
-                label           = { Text("Master Password") },
-                leadingIcon     = { Icon(Icons.Filled.Lock, null) },
-                trailingIcon    = {
-                    IconButton(onClick = vm::onToggleShowPassword) {
-                        Icon(
-                            if (state.showPassword) Icons.Filled.VisibilityOff
-                            else Icons.Filled.Visibility, null,
-                        )
-                    }
-                },
-                visualTransformation = if (state.showPassword)
-                    VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction    = ImeAction.Next,
-                    autoCorrectEnabled = false,
-                ),
-                keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
-                singleLine      = true,
-                modifier        = Modifier.fillMaxWidth(),
-                shape           = RoundedCornerShape(14.dp),
-            )
+            // Master password and Confirm password wrapped in IncognitoInput
+            com.spectre.app.core.ui.components.IncognitoInput {
+                Column {
+                    OutlinedTextField(
+                        value           = state.password,
+                        onValueChange   = vm::onPasswordChange,
+                        label           = { Text("Master Password") },
+                        leadingIcon     = { Icon(Icons.Filled.Lock, null) },
+                        trailingIcon    = {
+                            IconButton(onClick = vm::onToggleShowPassword) {
+                                Icon(
+                                    if (state.showPassword) Icons.Filled.VisibilityOff
+                                    else Icons.Filled.Visibility, null,
+                                )
+                            }
+                        },
+                        visualTransformation = if (state.showPassword)
+                            VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction    = ImeAction.Next,
+                            autoCorrectEnabled = false,
+                        ),
+                        keyboardActions = KeyboardActions(onNext = { focus.moveFocus(FocusDirection.Down) }),
+                        singleLine      = true,
+                        modifier        = Modifier.fillMaxWidth(),
+                        shape           = RoundedCornerShape(14.dp),
+                    )
 
-            Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(12.dp))
 
-            // Confirm password
-            OutlinedTextField(
-                value           = state.confirmPassword,
-                onValueChange   = vm::onConfirmPasswordChange,
-                label           = { Text("Confirm Master Password") },
-                leadingIcon     = { Icon(Icons.Filled.LockReset, null) },
-                visualTransformation = if (state.showPassword)
-                    VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction    = ImeAction.Done,
-                    autoCorrectEnabled = false,
-                ),
-                keyboardActions = KeyboardActions(onDone = {
-                    focus.clearFocus()
-                    vm.createVault()
-                }),
-                singleLine      = true,
-                modifier        = Modifier.fillMaxWidth(),
-                shape           = RoundedCornerShape(14.dp),
-            )
+                    // Confirm password
+                    OutlinedTextField(
+                        value           = state.confirmPassword,
+                        onValueChange   = vm::onConfirmPasswordChange,
+                        label           = { Text("Confirm Master Password") },
+                        leadingIcon     = { Icon(Icons.Filled.LockReset, null) },
+                        visualTransformation = if (state.showPassword)
+                            VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction    = ImeAction.Done,
+                            autoCorrectEnabled = false,
+                        ),
+                        keyboardActions = KeyboardActions(onDone = {
+                            focus.clearFocus()
+                            vm.createVault()
+                        }),
+                        singleLine      = true,
+                        modifier        = Modifier.fillMaxWidth(),
+                        shape           = RoundedCornerShape(14.dp),
+                    )
+                }
+            }
 
             // Error banner
             AnimatedVisibility(visible = state.error != null) {

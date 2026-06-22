@@ -28,14 +28,14 @@ val bottomNavItems = listOf(
     BottomNavItem(Route.Generator,  "Generator",  Icons.Filled.Casino,  Icons.Outlined.Casino),
     BottomNavItem(Route.Watchtower, "Watchtower", Icons.Filled.Shield,  Icons.Outlined.Shield),
     BottomNavItem(Route.Send,       "Send",       Icons.AutoMirrored.Filled.Send, Icons.AutoMirrored.Outlined.Send),
-    BottomNavItem(Route.Settings,   "Settings",   Icons.Filled.Settings,Icons.Outlined.Settings),
 )
 
 @Composable
 fun SpectreNavGraph(
     navController: NavHostController,
     startDestination: Route,
-    activeAccount: com.spectre.app.core.data.models.Account? = null
+    activeAccount: com.spectre.app.core.data.models.Account? = null,
+    initialPage: String? = null
 ) {
     NavHost(navController = navController, startDestination = startDestination) {
 
@@ -51,18 +51,46 @@ fun SpectreNavGraph(
 
         composable<Route.Auth> {
             AddVaultScreen(
-                onBitwardenUs = { navController.navigate(Route.Login) },
-                onBitwardenEu = { navController.navigate(Route.Login) }, // Simplified for now
-                onSelfHosted  = { navController.navigate(Route.Login) },
-                onKeePass     = { navController.navigate(Route.KeePassLogin) },
+                onBitwardenUs = {
+                    navController.navigate(
+                        Route.Login(
+                            serverLabel = "Bitwarden US",
+                            serverUrl = "https://api.bitwarden.com",
+                            identityUrl = "https://identity.bitwarden.com"
+                        )
+                    )
+                },
+                onBitwardenEu = {
+                    navController.navigate(
+                        Route.Login(
+                            serverLabel = "Bitwarden EU",
+                            serverUrl = "https://api.eu.bitwarden.com",
+                            identityUrl = "https://identity.eu.bitwarden.com"
+                        )
+                    )
+                },
+                onSelfHosted = {
+                    navController.navigate(
+                        Route.Login(
+                            serverLabel = "Self-hosted",
+                            serverUrl = "",
+                            identityUrl = "",
+                            useCustomServer = true
+                        )
+                    )
+                },
+                onKeePass = { navController.navigate(Route.KeePassLogin) },
+                onLocalVault = { navController.navigate(Route.CreateLocalVault) },
             )
         }
 
-        composable<Route.Login> {
+        composable<Route.Login> { back ->
+            val loginRoute: Route.Login = back.toRoute()
             LoginScreen(
-                serverLabel = "Bitwarden",
-                serverUrl   = "https://api.bitwarden.com",
-                identityUrl = "https://identity.bitwarden.com",
+                serverLabel = loginRoute.serverLabel,
+                serverUrl   = loginRoute.serverUrl,
+                identityUrl = loginRoute.identityUrl,
+                useCustomServerDefault = loginRoute.useCustomServer,
                 onBack      = { navController.popBackStack() },
                 onLoginSuccess = {
                     navController.navigate(Route.Vault) {
@@ -96,7 +124,23 @@ fun SpectreNavGraph(
         }
 
         composable<Route.Vault> {
-            com.spectre.app.feature.main.MainScreen(navController = navController, activeAccount = activeAccount)
+            com.spectre.app.feature.main.MainScreen(
+                navController = navController,
+                activeAccount = activeAccount,
+                initialPageName = initialPage
+            )
+        }
+
+        composable<Route.Settings> {
+            com.spectre.app.feature.settings.SettingsScreen(
+                onAddBitwardenAccount = { navController.navigate(Route.Auth) }
+            )
+        }
+
+        composable<Route.About> {
+            com.spectre.app.feature.about.AboutScreen(
+                onBack = { navController.popBackStack() }
+            )
         }
 
         composable<Route.VaultDetail> { back ->

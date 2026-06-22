@@ -45,17 +45,17 @@ fun SpectreCard(
                 if (containerColor != null) Brush.linearGradient(listOf(containerColor, containerColor))
                 else Brush.linearGradient(
                     colors = listOf(
-                        colorScheme.surfaceContainerLow,
-                        colorScheme.primary.copy(alpha = 0.06f),
+                        colorScheme.surfaceContainerLow.copy(alpha = 0.75f),
+                        colorScheme.primary.copy(alpha = 0.12f),
                     )
                 )
             )
             .border(
-                width = 0.5.dp,
+                width = 0.8.dp,
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        colorScheme.outline.copy(alpha = 0.4f),
-                        colorScheme.primary.copy(alpha = 0.15f),
+                        colorScheme.onSurface.copy(alpha = 0.15f),
+                        colorScheme.primary.copy(alpha = 0.25f),
                     )
                 ),
                 shape = shape,
@@ -291,7 +291,7 @@ fun SpectreTopBar(
     TopAppBar(
         modifier = modifier,
         title = {
-            Column(modifier = Modifier.padding(start = 4.dp)) {
+            Column(modifier = Modifier.padding(start = 0.dp)) {
                 Text(
                     text  = title,
                     style = MaterialTheme.typography.titleLarge,
@@ -328,7 +328,7 @@ fun SectionHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 0.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -663,3 +663,44 @@ fun PanicPinDialog(
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
     )
 }
+
+/**
+ * A modern, pill-shaped toast/snackbar that matches modern Android apps.
+ */
+@Composable
+fun SpectreSnackbar(
+    snackbarData: SnackbarData,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        shape = RoundedCornerShape(28.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF2C2C2C)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        modifier = modifier
+            .padding(horizontal = 24.dp, vertical = 8.dp)
+            .wrapContentSize()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Info,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = snackbarData.visuals.message,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Normal
+            )
+        }
+    }
+}
+

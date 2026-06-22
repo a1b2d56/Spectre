@@ -22,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.*
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.res.painterResource
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -62,6 +63,7 @@ class LoginViewModel @Inject constructor(
     fun onPasswordChange(v: String)       { _state.update { it.copy(password = v, error = null) } }
     fun onServerUrlChange(v: String)      { _state.update { it.copy(serverUrl = v) } }
     fun onToggleCustomServer()            { _state.update { it.copy(useCustomServer = !it.useCustomServer) } }
+    fun setUseCustomServer(use: Boolean)  { _state.update { it.copy(useCustomServer = use) } }
     fun onToggleShowPassword()            { _state.update { it.copy(showPassword = !it.showPassword) } }
     fun onTwoFactorTokenChange(v: String) { _state.update { it.copy(twoFactorToken = v, error = null) } }
 
@@ -112,6 +114,7 @@ fun LoginScreen(
     serverLabel: String  = "Bitwarden",
     serverUrl: String    = "https://api.bitwarden.com",
     identityUrl: String  = "https://identity.bitwarden.com",
+    useCustomServerDefault: Boolean = false,
     onBack: () -> Unit,
     onLoginSuccess: () -> Unit,
     vm: LoginViewModel   = hiltViewModel(),
@@ -120,6 +123,12 @@ fun LoginScreen(
     val focus  = LocalFocusManager.current
 
     LaunchedEffect(Unit) { vm.navigateToVault.collect { onLoginSuccess() } }
+
+    LaunchedEffect(useCustomServerDefault) {
+        if (useCustomServerDefault) {
+            vm.setUseCustomServer(true)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -130,6 +139,7 @@ fun LoginScreen(
             )
         },
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         Column(
             modifier = Modifier
@@ -141,8 +151,13 @@ fun LoginScreen(
         ) {
             Spacer(Modifier.height(16.dp))
 
-            Icon(Icons.Filled.Security, null,
-                modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+            // App icon
+            Icon(
+                painter = painterResource(com.spectre.app.R.drawable.ic_launcher_foreground),
+                contentDescription = null,
+                modifier = Modifier.size(112.dp),
+                tint = MaterialTheme.colorScheme.primary
+            )
             Spacer(Modifier.height(12.dp))
             Text("Sign in to $serverLabel",
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -170,31 +185,33 @@ fun LoginScreen(
             // Master password — INCOGNITO keyboard
             // IME_FLAG_NO_PERSONALIZED_LEARNING ensures GBoard doesn't learn from
             // the master password, matching Keyguard's behaviour.
-            OutlinedTextField(
-                value           = state.password,
-                onValueChange   = vm::onPasswordChange,
-                label           = { Text("Master Password") },
-                leadingIcon     = { Icon(Icons.Filled.Lock, null) },
-                trailingIcon    = {
-                    IconButton(onClick = vm::onToggleShowPassword) {
-                        Icon(if (state.showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null)
-                    }
-                },
-                visualTransformation = if (state.showPassword)
-                    VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Password,
-                    imeAction    = ImeAction.Done,
-                    autoCorrectEnabled  = false,
-                ),
-                keyboardActions = KeyboardActions(onDone = {
-                    focus.clearFocus()
-                    vm.login(serverUrl, identityUrl)
-                }),
-                singleLine      = true,
-                modifier        = Modifier.fillMaxWidth(),
-                shape           = RoundedCornerShape(14.dp),
-            )
+            com.spectre.app.core.ui.components.IncognitoInput {
+                OutlinedTextField(
+                    value           = state.password,
+                    onValueChange   = vm::onPasswordChange,
+                    label           = { Text("Master Password") },
+                    leadingIcon     = { Icon(Icons.Filled.Lock, null) },
+                    trailingIcon    = {
+                        IconButton(onClick = vm::onToggleShowPassword) {
+                            Icon(if (state.showPassword) Icons.Filled.VisibilityOff else Icons.Filled.Visibility, null)
+                        }
+                    },
+                    visualTransformation = if (state.showPassword)
+                        VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction    = ImeAction.Done,
+                        autoCorrectEnabled  = false,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = {
+                        focus.clearFocus()
+                        vm.login(serverUrl, identityUrl)
+                    }),
+                    singleLine      = true,
+                    modifier        = Modifier.fillMaxWidth(),
+                    shape           = RoundedCornerShape(14.dp),
+                )
+            }
 
             // 2FA
             AnimatedVisibility(visible = state.twoFactorRequired) {
@@ -222,7 +239,7 @@ fun LoginScreen(
             }
 
             // Custom server
-            if (serverUrl == "https://api.bitwarden.com") {
+            if (serverUrl == "https://api.bitwarden.com" || useCustomServerDefault) {
                 Spacer(Modifier.height(8.dp))
                 Row(
                     modifier          = Modifier.fillMaxWidth().clickable { vm.onToggleCustomServer() },

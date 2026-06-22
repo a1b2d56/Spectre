@@ -59,7 +59,10 @@ class BitwardenCrypto @Inject constructor() {
 
         return when (kdfType) {
             0 -> pbkdf2HmacSha256(passwordBytes, saltBytes, kdfIterations, 32)
-            1 -> argon2id(passwordBytes, saltBytes, kdfMemory, kdfIterations, kdfParallelism, 32)
+            1 -> {
+                val saltHash = MessageDigest.getInstance("SHA-256").digest(saltBytes)
+                argon2id(passwordBytes, saltHash, kdfMemory, kdfIterations, kdfParallelism, 32)
+            }
             else -> error("Unsupported KDF type: $kdfType")
         }
     }

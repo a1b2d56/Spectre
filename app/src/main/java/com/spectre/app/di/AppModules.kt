@@ -70,7 +70,7 @@ object DatabaseModule {
     fun provideDatabase(@ApplicationContext context: Context): SpectreDatabase =
         Room.databaseBuilder(context, SpectreDatabase::class.java, "spectre_vault.db")
             .openHelperFactory(VaultKeyManager.buildSupportFactory(context))
-            .addMigrations(SpectreDatabase.MIGRATION_2_3)
+            .addMigrations(SpectreDatabase.MIGRATION_2_3, SpectreDatabase.MIGRATION_3_4)
             .build()
 
     @Provides fun provideAccountDao(db: SpectreDatabase):      AccountDao      = db.accountDao()

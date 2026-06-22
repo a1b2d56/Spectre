@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.spectre.app.core.data.database
 
 import android.content.Context
@@ -24,7 +26,7 @@ import android.util.Base64
         GeneratorHistoryEntity::class,
         IgnoredWatchtowerItemEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class SpectreDatabase : RoomDatabase() {
@@ -41,6 +43,18 @@ abstract class SpectreDatabase : RoomDatabase() {
         val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE ignored_watchtower_items ADD COLUMN accountId TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
+         * Adds the `lastSyncedRevision` column to `ciphers` and `folders`.
+         * This is the server's revisionDate captured at the time of the last
+         * successful sync — the baseline for the 3-way merge engine.
+         */
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE ciphers ADD COLUMN lastSyncedRevision TEXT DEFAULT NULL")
+                db.execSQL("ALTER TABLE folders ADD COLUMN lastSyncedRevision TEXT DEFAULT NULL")
             }
         }
     }

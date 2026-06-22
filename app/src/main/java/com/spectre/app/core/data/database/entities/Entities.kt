@@ -83,8 +83,16 @@ data class CipherEntity(
     val collectionIds: String?,     // JSON array
     // Local-only metadata
     val localFaviconUri: String? = null,
-    val pendingSync: Boolean = false,   // modified locally, not yet synced
+    val pendingSync: Boolean = false,       // modified locally, not yet synced
     val localCreatedAt: Long = System.currentTimeMillis(),
+    /**
+     * The server's revisionDate at the time of the last successful full sync.
+     * Used by SyncDiffer to detect whether the remote record changed since
+     * our last sync (server changed = lastSyncedRevision != server.revisionDate)
+     * and whether we changed locally (pendingSync == true).
+     * Null means never synced from server (local-only or pre-migration row).
+     */
+    val lastSyncedRevision: String? = null,
 )
 
 // Folder
@@ -96,6 +104,8 @@ data class FolderEntity(
     val name: String,           // EncString
     val revisionDate: String,
     val pendingSync: Boolean = false,
+    /** Server revisionDate at time of last successful sync (null = never synced). */
+    val lastSyncedRevision: String? = null,
 )
 
 // Collection
