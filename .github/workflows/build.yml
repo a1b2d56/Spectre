@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write   # needed to create GitHub Releases and upload assets
+
 jobs:
   build:
     name: Build Signed Release APK
