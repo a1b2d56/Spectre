@@ -71,7 +71,8 @@ class AuthInterceptor @Inject constructor(
         val request = if (token != null) {
             chain.request().newBuilder()
                 .header("Authorization", "Bearer $token")
-                .header("Device-Type", "8")   // 8 = Android
+                .header("Device-Type", "8")   // 8 = LinuxDesktop (Keyguard style)
+                .header("device-type", "8")
                 .build()
         } else {
             chain.request()

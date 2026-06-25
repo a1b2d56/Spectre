@@ -13,14 +13,14 @@ interface IdentityApi {
     @FormUrlEncoded
     suspend fun getToken(
         @Header("Auth-Email")         authEmail: String,
-        @Header("device-type")        deviceTypeHeader: String = "14",
+        @Header("device-type")        deviceTypeHeader: String = "8",
         @Field("grant_type")          grantType: String        = "password",
         @Field("username")            username: String,
         @Field("password")            password: String,
         @Field("scope")               scope: String            = "api offline_access",
-        @Field("client_id")           clientId: String         = "web",
-        @Field("deviceType")          deviceType: Int          = 14,
-        @Field("deviceName")          deviceName: String       = "android",
+        @Field("client_id")           clientId: String         = "desktop",
+        @Field("deviceType")          deviceType: Int          = 8,
+        @Field("deviceName")          deviceName: String       = "linux",
         @Field("deviceIdentifier")    deviceIdentifier: String,
         @Field("two_factor_token")    twoFactorToken: String?  = null,
         @Field("two_factor_provider") twoFactorProvider: Int?  = null,
@@ -31,7 +31,7 @@ interface IdentityApi {
     @FormUrlEncoded
     suspend fun refreshToken(
         @Field("grant_type")    grantType: String    = "refresh_token",
-        @Field("client_id")     clientId: String     = "web",
+        @Field("client_id")     clientId: String     = "desktop",
         @Field("refresh_token") refreshToken: String,
     ): Response<TokenResponse>
 }
