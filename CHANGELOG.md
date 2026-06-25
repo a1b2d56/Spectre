@@ -4,6 +4,22 @@ All notable changes to Spectre are documented here.
 
 ---
 
+## [1.8.8] — 2026-06-25
+
+### Added
+- **Liquid Glass Navigation Bar**: iOS-like premium glassmorphic bottom bar using custom shaders, real-time vibrancy, and gyroscope tilt specular highlights (ported from KernelSU)
+- **Fluid Spring Animations**: Smooth damped drag physics and interactive highlights for navigation indicator transitions
+- **Android App Shortcuts**: Long-press app icon to quickly access Password Generator, Watchtower, or Send list
+- **Dynamic Capsule Heights**: Automatically collapses and centers bottom navigation bar when labels are disabled
+
+### Fixed
+- **Bitwarden Send Crash**: Fixed `SymmetricKey` length crash ("must be 64 bytes") by generating correct 64-byte keys using secure random bytes rather than a 32-character hex string
+- **Text Truncation**: Fixed Watchtower tab label showing as "Watchtowe" and Check Breaches action button text wrapping
+- **Menu Display Name**: Replaced redundant raw email in drawer header with clean "My Vault" fallback
+- **Sync Precision Mismatches**: Absorbed sub-second differences between client and server revision times to prevent false-positive sync conflicts
+
+---
+
 ## [1.8.4] — 2026-06-22
 
 ### Added
