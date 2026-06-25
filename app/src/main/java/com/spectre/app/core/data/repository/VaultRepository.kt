@@ -428,8 +428,12 @@ class VaultRepository @Inject constructor(
 
             val encryptedText = textContent?.let { crypto.encryptString(it, sendKey).encode() }
 
+            val nowInstant = java.time.Instant.now()
+            val defaultDeletionDate = nowInstant.plus(java.time.Duration.ofDays(7)).toString()
+            val finalDeletionDate = expirationDate ?: defaultDeletionDate
+
             val entity = if (isLocal) {
-                val now = java.time.Instant.now().toString()
+                val nowStr = nowInstant.toString()
                 SendResponse(
                     id = UUID.randomUUID().toString(),
                     type = type,
@@ -438,10 +442,10 @@ class VaultRepository @Inject constructor(
                     maxAccessCount = maxAccessCount,
                     accessCount = 0,
                     expirationDate = expirationDate,
-                    deletionDate = expirationDate ?: now,
+                    deletionDate = finalDeletionDate,
                     disabled = false,
                     text = if (type == 0) SendTextResponse(text = encryptedText, hidden = hidden) else null,
-                    revisionDate = now,
+                    revisionDate = nowStr,
                 ).toEntity(accountId)
             } else {
                 val request = SendRequest(
@@ -450,11 +454,15 @@ class VaultRepository @Inject constructor(
                     key = sendKeyEnc,
                     maxAccessCount = maxAccessCount,
                     expirationDate = expirationDate,
-                    deletionDate = expirationDate,
+                    deletionDate = finalDeletionDate,
                     disabled = false,
                     text = if (type == 0) SendTextRequest(text = encryptedText, hidden = hidden) else null,
                 )
                 val response = vaultApi.createSend(request)
+                if (!response.isSuccessful) {
+                    val errStr = response.errorBody()?.string()
+                    error("Create send failed (${response.code()}): $errStr")
+                }
                 val body = response.body() ?: error("Create send failed (${response.code()})")
                 body.toEntity(accountId)
             }
