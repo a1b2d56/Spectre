@@ -109,8 +109,8 @@ class SendViewModel @Inject constructor(
     private fun getSendBaseUrl(serverUrl: String): String {
         val cleanUrl = serverUrl.trim().removeSuffix("/")
         return when {
-            cleanUrl.contains("api.eu.bitwarden.com") || cleanUrl.contains("identity.eu.bitwarden.com") || cleanUrl.contains("vault.eu.bitwarden.com") -> {
-                "https://send.eu.bitwarden.com/#/send/"
+            cleanUrl.contains("bitwarden.eu") || cleanUrl.contains("api.eu.bitwarden.com") || cleanUrl.contains("identity.eu.bitwarden.com") || cleanUrl.contains("vault.eu.bitwarden.com") -> {
+                "https://send.bitwarden.eu/#/send/"
             }
             cleanUrl.contains("api.bitwarden.com") || cleanUrl.contains("identity.bitwarden.com") || cleanUrl.contains("vault.bitwarden.com") -> {
                 "https://send.bitwarden.com/#/send/"

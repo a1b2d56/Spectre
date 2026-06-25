@@ -54,12 +54,28 @@ class BiometricUnlock @Inject constructor(
         ) == BiometricManager.BIOMETRIC_SUCCESS
     }
 
+    private fun getEncryptedData(accountId: String): String? {
+        val key = KEY_ENCRYPTED_DATA + "_" + accountId
+        if (prefs.contains(key)) {
+            return prefs.getString(key, null)
+        }
+        return prefs.getString(KEY_ENCRYPTED_DATA, null)
+    }
+
+    private fun getIv(accountId: String): String? {
+        val key = KEY_IV + "_" + accountId
+        if (prefs.contains(key)) {
+            return prefs.getString(key, null)
+        }
+        return prefs.getString(KEY_IV, null)
+    }
+
     /**
-     * Checks if we have a stored encrypted master password.
+     * Checks if we have a stored encrypted master password for a specific account.
      */
-    fun hasStoredSecret(): Boolean {
-        return !prefs.getString(KEY_ENCRYPTED_DATA, null).isNullOrBlank() &&
-               !prefs.getString(KEY_IV, null).isNullOrBlank()
+    fun hasStoredSecret(accountId: String): Boolean {
+        return !getEncryptedData(accountId).isNullOrBlank() &&
+               !getIv(accountId).isNullOrBlank()
     }
 
     /**
@@ -67,6 +83,7 @@ class BiometricUnlock @Inject constructor(
      */
     fun promptToEncrypt(
         activity: androidx.fragment.app.FragmentActivity,
+        accountId: String,
         masterPassword: String,
         onResult: (BiometricResult) -> Unit,
     ) {
@@ -88,8 +105,8 @@ class BiometricUnlock @Inject constructor(
                     val cipherText = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
 
                     prefs.edit()
-                        .putString(KEY_ENCRYPTED_DATA, cipherText)
-                        .putString(KEY_IV, iv)
+                        .putString(KEY_ENCRYPTED_DATA + "_" + accountId, cipherText)
+                        .putString(KEY_IV + "_" + accountId, iv)
                         .apply()
 
                     onResult(BiometricResult.Success(ByteArray(0))) // Success indicator
@@ -117,8 +134,11 @@ class BiometricUnlock @Inject constructor(
         prompt.authenticate(promptInfo, cryptoObject)
     }
 
-    fun clearSecret() {
-        prefs.edit().clear().apply()
+    fun clearSecret(accountId: String) {
+        prefs.edit()
+            .remove(KEY_ENCRYPTED_DATA + "_" + accountId)
+            .remove(KEY_IV + "_" + accountId)
+            .apply()
     }
 
     /**
@@ -126,10 +146,11 @@ class BiometricUnlock @Inject constructor(
      */
     fun promptToUnlock(
         activity: androidx.fragment.app.FragmentActivity,
+        accountId: String,
         onResult: (BiometricResult) -> Unit,
     ) {
-        val encryptedData = prefs.getString(KEY_ENCRYPTED_DATA, null)
-        val iv = prefs.getString(KEY_IV, null)
+        val encryptedData = getEncryptedData(accountId)
+        val iv = getIv(accountId)
 
         if (encryptedData.isNullOrBlank() || iv.isNullOrBlank()) {
             onResult(BiometricResult.Error("No biometric data stored"))

@@ -36,6 +36,9 @@ interface AccountDao {
     @Query("UPDATE accounts SET premium = :premium WHERE id = :id")
     suspend fun updatePremiumStatus(id: String, premium: Boolean)
 
+    @Query("UPDATE accounts SET premium = :premium, name = :name WHERE id = :id")
+    suspend fun updateProfileInfo(id: String, name: String?, premium: Boolean)
+
     @Query("DELETE FROM accounts WHERE id = :id")
     suspend fun deleteById(id: String)
 

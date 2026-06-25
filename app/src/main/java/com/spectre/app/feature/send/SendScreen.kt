@@ -212,7 +212,7 @@ fun SendScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Password Protection", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = isPasswordProtected, onCheckedChange = { isPasswordProtected = it })
+                    SpectreSwitch(checked = isPasswordProtected, onCheckedChange = { isPasswordProtected = it })
                 }
             }
 

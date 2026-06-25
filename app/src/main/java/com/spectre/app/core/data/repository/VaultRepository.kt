@@ -149,8 +149,8 @@ class VaultRepository @Inject constructor(
             val body     = response.body()
                 ?: error("Empty sync response (${response.code()}): ${response.errorBody()?.string()}")
 
-            // Update account premium status
-            accountDao.updatePremiumStatus(accountId, body.profile.premium)
+            // Update account profile info (name, premium status)
+            accountDao.updateProfileInfo(accountId, body.profile.name, body.profile.premium)
 
             // Organisations — no local edits possible, safe to replace
             organizationDao.deleteAllForAccount(accountId)
@@ -179,7 +179,7 @@ class VaultRepository @Inject constructor(
                 // Insert / update server folders
                 for ((id, remote) in remoteFolders) {
                     val local = localFolders[id]
-                    if (local == null || (!local.pendingSync && remote.revisionDate != local.revisionDate)) {
+                    if (local == null || (!local.pendingSync && !SyncDiffer.areDatesEqualDeciseconds(remote.revisionDate, local.revisionDate))) {
                         folderDao.upsert(remote.toEntity(accountId).copy(
                             lastSyncedRevision = remote.revisionDate
                         ))
@@ -420,10 +420,11 @@ class VaultRepository @Inject constructor(
         val isLocal = account?.isLocal == true
 
         runCatching {
-            // Generate a random key for this Send (independent of vault key)
-            val sendKeyBytes = ByteArray(32).apply { java.util.Random().nextBytes(this) }
+            // Per Bitwarden spec: generate 64-byte symmetric key (32 AES + 32 MAC) using SecureRandom
+            val sendKeyBytes = ByteArray(64).also { java.security.SecureRandom().nextBytes(it) }
             val sendKey = SymmetricKey(sendKeyBytes)
-            val sendKeyEnc = crypto.encryptString(sendKeyBytes.joinToString("") { "%02x".format(it) }, session.getUserKey()).encode()
+            // Encrypt the raw 64 bytes (not hex) under the user vault key
+            val sendKeyEnc = crypto.encrypt(sendKeyBytes, session.getUserKey()).encode()
 
             val encryptedText = textContent?.let { crypto.encryptString(it, sendKey).encode() }
 
@@ -464,8 +465,14 @@ class VaultRepository @Inject constructor(
 
     private fun decryptSend(entity: SendEntity): DecryptedSend? = runCatching {
         val vaultKey = session.getUserKey()
-        val decSendKeyHex = crypto.decryptOrNull(entity.key, vaultKey) ?: return null
-        val keyBytes = decSendKeyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        val keyBytes = runCatching {
+            val encString = EncString.parse(entity.key)
+            crypto.decrypt(encString, vaultKey)
+        }.getOrElse {
+            // Fallback in case there is old hex-encrypted string in db
+            val decSendKeyHex = crypto.decryptOrNull(entity.key, vaultKey) ?: return null
+            decSendKeyHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        }
         val sendKey = SymmetricKey(keyBytes)
         val keyBase64 = android.util.Base64.encodeToString(keyBytes, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
 

@@ -3,6 +3,9 @@ package com.spectre.app
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import android.view.WindowManager
 import android.view.autofill.AutofillManager
 import android.service.autofill.FillResponse
@@ -161,6 +164,7 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        initAppShortcuts()
         setContent {
             val vm: MainViewModel = hiltViewModel()
             val settings          by vm.settings.collectAsStateWithLifecycle()
@@ -249,6 +253,54 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             } else {
                 session.recordActivity()
             }
+        }
+    }
+
+    private fun initAppShortcuts() {
+        try {
+            val context = this
+            val maxCount = ShortcutManagerCompat.getMaxShortcutCountPerActivity(context)
+            if (maxCount <= 0) return
+
+            // 1. Generator Shortcut
+            val generatorIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                putExtra("open_page", "generator")
+            }
+            val generatorShortcut = ShortcutInfoCompat.Builder(context, "shortcut_generator")
+                .setShortLabel("Generator")
+                .setLongLabel("Generate a secure password")
+                .setIcon(IconCompat.createWithResource(context, android.R.drawable.ic_menu_compass))
+                .setIntent(generatorIntent)
+                .build()
+
+            // 2. Watchtower Shortcut
+            val watchtowerIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                putExtra("open_page", "watchtower")
+            }
+            val watchtowerShortcut = ShortcutInfoCompat.Builder(context, "shortcut_watchtower")
+                .setShortLabel("Watchtower")
+                .setLongLabel("Scan for security breaches")
+                .setIcon(IconCompat.createWithResource(context, android.R.drawable.ic_dialog_info))
+                .setIntent(watchtowerIntent)
+                .build()
+
+            // 3. Send Shortcut
+            val sendIntent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_VIEW
+                putExtra("open_page", "send")
+            }
+            val sendShortcut = ShortcutInfoCompat.Builder(context, "shortcut_send")
+                .setShortLabel("Send")
+                .setLongLabel("Share secure text or files")
+                .setIcon(IconCompat.createWithResource(context, android.R.drawable.ic_menu_share))
+                .setIntent(sendIntent)
+                .build()
+
+            ShortcutManagerCompat.setDynamicShortcuts(context, listOf(generatorShortcut, watchtowerShortcut, sendShortcut))
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }

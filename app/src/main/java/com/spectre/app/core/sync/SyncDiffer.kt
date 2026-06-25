@@ -89,6 +89,24 @@ sealed class SyncOp {
  */
 object SyncDiffer {
 
+    fun roundToDeciseconds(dateStr: String?): Long? {
+        if (dateStr.isNullOrBlank()) return null
+        return try {
+            val instant = java.time.Instant.parse(dateStr)
+            val epochMillis = instant.toEpochMilli()
+            Math.round(epochMillis / 100.0)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun areDatesEqualDeciseconds(d1: String?, d2: String?): Boolean {
+        if (d1 == d2) return true
+        val r1 = roundToDeciseconds(d1)
+        val r2 = roundToDeciseconds(d2)
+        return r1 != null && r1 == r2
+    }
+
     /**
      * @param localCiphers All CipherEntity rows for the account in the local DB.
      * @param remoteCiphers All CipherResponse objects from the server sync API.
@@ -111,12 +129,12 @@ object SyncDiffer {
                 continue
             }
 
-            val baseline  = local.lastSyncedRevision  // revision we knew about last time
-            val localRev  = local.revisionDate
-            val remoteRev = remote.revisionDate
+            val baselineDeci = roundToDeciseconds(local.lastSyncedRevision)
+            val localDeci    = roundToDeciseconds(local.revisionDate)
+            val remoteDeci   = roundToDeciseconds(remote.revisionDate)
 
-            val localChanged  = local.pendingSync || (baseline != null && localRev != baseline)
-            val serverChanged = baseline == null || remoteRev != baseline
+            val localChanged  = local.pendingSync || (baselineDeci != null && localDeci != baselineDeci)
+            val serverChanged = baselineDeci == null || remoteDeci != baselineDeci
 
             when {
                 !localChanged && !serverChanged -> ops += SyncOp.NoChange(local)

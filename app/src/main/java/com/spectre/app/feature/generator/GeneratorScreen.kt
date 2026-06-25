@@ -608,7 +608,7 @@ private fun OptionSwitch(label: String, checked: Boolean, onCheckedChange: (Bool
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        SpectreSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

@@ -42,28 +42,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.spectre.app.R
 import com.spectre.app.core.navigation.Route
-import com.spectre.app.core.ui.components.glassPanel
 import com.spectre.app.core.ui.components.SpectreCard
+import com.spectre.app.core.ui.components.FloatingBottomBar
+import com.spectre.app.core.ui.components.FloatingBottomBarItem
+import com.spectre.app.core.ui.components.rememberBlurBackdrop
 import com.spectre.app.core.ui.theme.dynamic
 import com.spectre.app.navigation.bottomNavItems
 import com.spectre.app.feature.generator.GeneratorScreen
 import com.spectre.app.feature.send.SendScreen
 import com.spectre.app.feature.vault.VaultScreen
 import com.spectre.app.feature.watchtower.WatchtowerScreen
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.spectre.app.feature.settings.SettingsViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MainScreen(
     navController: NavHostController,
     activeAccount: com.spectre.app.core.data.models.Account? = null,
-    initialPageName: String? = null
+    initialPageName: String? = null,
+    vm: SettingsViewModel = hiltViewModel()
 ) {
+    val settings by vm.settings.collectAsStateWithLifecycle(initialValue = com.spectre.app.core.data.datastore.SpectreSettings())
+
     // Filter out Send for local vaults
     val filteredNavItems = remember(activeAccount) {
         if (activeAccount?.isLocal == true) {
@@ -90,15 +94,14 @@ fun MainScreen(
 
     var isMenuOpen by remember { mutableStateOf(false) }
 
-    // Backdrop capture state for frosted glass effects
-    val backdrop = rememberLayerBackdrop()
+    val enableLiquidGlass = settings.enableLiquidGlass && top.yukonga.miuix.kmp.shader.isRenderEffectSupported()
+    val backdrop = rememberBlurBackdrop(enableBlur = enableLiquidGlass)
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Main content layer (wrapped in layerBackdrop so frosted glass can capture it)
+        // Main content layer
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .layerBackdrop(backdrop)
                 .background(MaterialTheme.colorScheme.background)
         ) {
             HorizontalPager(
@@ -132,58 +135,89 @@ fun MainScreen(
             FullScreenMenuOverlay(
                 navController = navController,
                 activeAccount = activeAccount,
-                onClose = { isMenuOpen = false },
-                backdrop = backdrop
+                onClose = { isMenuOpen = false }
             )
         }
 
-        // Floating Bottom Nav Bar capsule drawn on top — frosted glass
+        // Bottom Navigation Bar
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
                 .padding(bottom = 20.dp)
-                .navigationBarsPadding()
-                .glassPanel(
-                    backdrop = backdrop,
-                    shape = CircleShape,
-                    blurRadius = 16.dp,
-                    tintColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                    fallbackColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                )
+                .navigationBarsPadding(),
+            contentAlignment = Alignment.Center
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(68.dp)
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly
+            val totalTabs = filteredNavItems.size + 1
+            FloatingBottomBar(
+                selectedIndex = { if (isMenuOpen) totalTabs - 1 else pagerState.currentPage },
+                onSelected = { index ->
+                    if (index == totalTabs - 1) {
+                        isMenuOpen = true
+                    } else {
+                        isMenuOpen = false
+                        coroutineScope.launch { pagerState.animateScrollToPage(index) }
+                    }
+                },
+                backdrop = backdrop,
+                tabsCount = totalTabs,
+                isBlurEnabled = enableLiquidGlass,
+                showLabels = settings.showBottomNavLabels
             ) {
                 filteredNavItems.forEachIndexed { index, item ->
                     val isSelected = !isMenuOpen && pagerState.currentPage == index
-                    
-                    FloatingNavItem(
-                        selected = isSelected,
-                        label = item.label,
-                        icon = if (isSelected) item.selectedIcon else item.unselectedIcon,
+                    FloatingBottomBarItem(
                         onClick = {
                             isMenuOpen = false
                             coroutineScope.launch { pagerState.animateScrollToPage(index) }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
+                            contentDescription = item.label,
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (settings.showBottomNavLabels) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = item.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
+                                lineHeight = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold.dynamic() else FontWeight.Medium.dynamic(),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 }
 
-                // Menu Overlay Trigger Item
-                FloatingNavItem(
-                    selected = isMenuOpen,
-                    label = "Menu",
-                    icon = Icons.Default.Menu,
-                    onClick = { isMenuOpen = !isMenuOpen },
-                    modifier = Modifier.weight(1f)
-                )
+                // Menu Item
+                FloatingBottomBarItem(
+                    onClick = { isMenuOpen = true }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = "Menu",
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (settings.showBottomNavLabels) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Menu",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 10.sp,
+                            lineHeight = 12.sp,
+                            fontWeight = if (isMenuOpen) FontWeight.Bold.dynamic() else FontWeight.Medium.dynamic(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
         }
     }
@@ -244,9 +278,10 @@ private fun FullScreenMenuOverlay(
     navController: NavHostController,
     activeAccount: com.spectre.app.core.data.models.Account?,
     onClose: () -> Unit,
-    backdrop: com.kyant.backdrop.Backdrop,
     vm: SettingsViewModel = hiltViewModel()
 ) {
+    val accounts by vm.accounts.collectAsStateWithLifecycle()
+
     fun navigateToRoute(route: Route) {
         onClose()
         navController.navigate(route) {
@@ -256,13 +291,7 @@ private fun FullScreenMenuOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .glassPanel(
-                backdrop = backdrop,
-                shape = androidx.compose.ui.graphics.RectangleShape,
-                blurRadius = 24.dp,
-                tintColor = MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
-                fallbackColor = MaterialTheme.colorScheme.background
-            )
+            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.95f))
     ) {
         BackHandler(onBack = onClose)
         Column(
@@ -282,8 +311,16 @@ private fun FullScreenMenuOverlay(
             ) {
                 // Profile Header
                 item {
-                    val name = activeAccount?.name ?: "Local Vault"
-                    val email = activeAccount?.email ?: "Offline Mode"
+                    val name = if (activeAccount?.isLocal == true) {
+                        "Local Vault"
+                    } else {
+                        activeAccount?.name?.takeIf { it.isNotBlank() } ?: "My Vault"
+                    }
+                    val email = if (activeAccount?.isLocal == true) {
+                        "Offline Mode"
+                    } else {
+                        activeAccount?.email ?: ""
+                    }
                     val initial = if (name.isNotEmpty()) name.take(1).uppercase() else "S"
 
                     SpectreCard(
@@ -322,13 +359,81 @@ private fun FullScreenMenuOverlay(
                                 color = MaterialTheme.colorScheme.onBackground
                             )
 
-                            Spacer(modifier = Modifier.height(2.dp))
+                            if (email.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = email,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
+                            }
 
-                            Text(
-                                text = email,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                            )
+                            // Show other accounts for quick switching
+                            val otherAccounts = accounts.filter { it.id != activeAccount?.id }
+                            if (otherAccounts.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "SWITCH ACCOUNT",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                otherAccounts.forEach { account ->
+                                    val otherName = if (account.isLocal) {
+                                        "Local Vault"
+                                    } else {
+                                        account.name?.takeIf { it.isNotBlank() } ?: "My Vault"
+                                    }
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                onClose()
+                                                vm.switchAccount(account.id)
+                                            }
+                                            .padding(vertical = 8.dp, horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = otherName.take(1).uppercase(),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = otherName,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (!account.isLocal && account.email != otherName) {
+                                                Text(
+                                                    text = account.email,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             Spacer(modifier = Modifier.height(8.dp))
                             TextButton(
@@ -337,11 +442,11 @@ private fun FullScreenMenuOverlay(
                             ) {
                                 Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Switch / Add Account", style = MaterialTheme.typography.labelLarge)
-                            }
+                                Text("Add Account", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
+            }
 
                 // Navigation Items Grouped into WhatsApp/Telegram Style Cards
                 item {

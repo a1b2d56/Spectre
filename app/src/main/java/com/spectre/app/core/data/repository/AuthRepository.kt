@@ -176,16 +176,16 @@ class AuthRepository @Inject constructor(
 
             // Validate pre-login KDF parameters
             if (preLogin.kdf == 0) {
-                if (preLogin.kdfIterations < 600_000) {
-                    return@withContext LoginResult.Error("PBKDF2 iterations must be at least 600,000; contact the server admin.")
+                if (preLogin.kdfIterations < 5000) {
+                    return@withContext LoginResult.Error("PBKDF2 iterations must be at least 5,000; contact the server admin.")
                 }
             } else if (preLogin.kdf == 1) {
-                if (preLogin.kdfIterations < 2) {
-                    return@withContext LoginResult.Error("Argon2 iterations must be at least 2; contact the server admin.")
+                if (preLogin.kdfIterations < 1) {
+                    return@withContext LoginResult.Error("Argon2 iterations must be at least 1; contact the server admin.")
                 }
                 val m = preLogin.kdfMemory ?: 64
-                if (m < 16) {
-                    return@withContext LoginResult.Error("Argon2 memory must be at least 16 MiB; contact the server admin.")
+                if (m < 1) {
+                    return@withContext LoginResult.Error("Argon2 memory must be at least 1 MiB; contact the server admin.")
                 }
                 val p = preLogin.kdfParallelism ?: 4
                 if (p < 1) {

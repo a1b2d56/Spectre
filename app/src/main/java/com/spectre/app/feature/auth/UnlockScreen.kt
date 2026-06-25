@@ -77,7 +77,7 @@ class UnlockViewModel @Inject constructor(
 
     fun unlockWithBiometrics(accountId: String, activity: androidx.fragment.app.FragmentActivity) {
         viewModelScope.launch {
-            biometricUnlock.promptToUnlock(activity) { result ->
+            biometricUnlock.promptToUnlock(activity, accountId) { result ->
                 if (result is com.spectre.app.core.security.BiometricResult.Success) {
                     val password = String(result.decryptedData)
                     unlockWithPassword(accountId, password)
@@ -103,7 +103,7 @@ fun UnlockScreen(
     
     val canUseBiometrics = settings.biometricUnlock && 
                           vm.biometricUnlock.isEnrolled() && 
-                          vm.biometricUnlock.hasStoredSecret()
+                          vm.biometricUnlock.hasStoredSecret(accountId)
 
     var showPwField  by remember { mutableStateOf(!canUseBiometrics) }
 

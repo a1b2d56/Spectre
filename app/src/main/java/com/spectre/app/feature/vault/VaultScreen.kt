@@ -63,7 +63,17 @@ class VaultViewModel @Inject constructor(
 
     private var searchJob: Job? = null
 
-    init { observeVault() }
+    init {
+        observeVault()
+        syncSilently()
+    }
+
+    private fun syncSilently() {
+        val accountId = session.activeAccountId ?: return
+        viewModelScope.launch {
+            vaultRepository.sync(accountId)
+        }
+    }
 
     private fun observeVault() {
         viewModelScope.launch {

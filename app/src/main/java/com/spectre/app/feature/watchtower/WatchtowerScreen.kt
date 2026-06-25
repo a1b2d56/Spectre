@@ -337,9 +337,9 @@ fun WatchtowerScreen(
                     ) {
                         OutlinedButton(
                             onClick  = { vm.refresh() },
-                            modifier = Modifier.weight(1f).height(48.dp),
+                            modifier = Modifier.width(108.dp).height(48.dp),
                             shape    = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                         ) {
                             Icon(Icons.Filled.Refresh, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
@@ -398,10 +398,9 @@ fun WatchtowerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(title, style = MaterialTheme.typography.bodyMedium)
-                            Switch(
+                            SpectreSwitch(
                                 checked = checked, 
-                                onCheckedChange = { setter(it) },
-                                modifier = Modifier.scale(0.8f)
+                                onCheckedChange = { setter(it) }
                             )
                         }
                     }

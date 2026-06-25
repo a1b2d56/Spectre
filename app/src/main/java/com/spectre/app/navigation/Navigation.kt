@@ -64,8 +64,8 @@ fun SpectreNavGraph(
                     navController.navigate(
                         Route.Login(
                             serverLabel = "Bitwarden EU",
-                            serverUrl = "https://api.eu.bitwarden.com",
-                            identityUrl = "https://identity.eu.bitwarden.com"
+                            serverUrl = "https://api.bitwarden.eu",
+                            identityUrl = "https://identity.bitwarden.eu"
                         )
                     )
                 },

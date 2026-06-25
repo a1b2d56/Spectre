@@ -21,8 +21,8 @@ android {
         applicationId   = "com.spectre.app"
         minSdk          = 34
         targetSdk       = 37
-        versionCode     = 15
-        versionName     = "1.8.4"
+        versionCode     = 16
+        versionName     = "1.8.8"
 
         // Optimizations:
         // 1. Strip non-English localizations from dependencies
@@ -105,11 +105,11 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.core.splashscreen)
+    implementation(libs.miuix.blur)
 
     // Compose BOM
     val composeBom = platform("androidx.compose:compose-bom:2025.05.01")
     implementation(composeBom)
-    implementation(libs.backdrop)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)

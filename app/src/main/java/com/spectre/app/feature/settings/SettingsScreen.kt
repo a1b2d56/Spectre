@@ -73,19 +73,21 @@ class SettingsViewModel @Inject constructor(
     fun setFontScale(s: Float)                 = viewModelScope.launch { prefs.setFontScale(s) }
     fun setIsBold(b: Boolean)                  = viewModelScope.launch { prefs.setIsBold(b) }
     fun setFontFamily(f: String)               = viewModelScope.launch { prefs.setFontFamily(f) }
+    fun setEnableLiquidGlass(v: Boolean)       = viewModelScope.launch { prefs.setEnableLiquidGlass(v) }
     
     fun setBiometricUnlock(v: Boolean, activity: androidx.fragment.app.FragmentActivity? = null, masterPassword: String? = null) {
         viewModelScope.launch {
+            val accountId = session.activeAccountId ?: return@launch
             if (v) {
                 if (masterPassword != null && activity != null) {
-                    biometricUnlock.promptToEncrypt(activity, masterPassword) { result ->
+                    biometricUnlock.promptToEncrypt(activity, accountId, masterPassword) { result ->
                         if (result is com.spectre.app.core.security.BiometricResult.Success) {
                             viewModelScope.launch { prefs.setBiometricUnlock(true) }
                         }
                     }
                 }
             } else {
-                biometricUnlock.clearSecret()
+                biometricUnlock.clearSecret(accountId)
                 prefs.setBiometricUnlock(false)
             }
         }
@@ -979,6 +981,14 @@ private fun AppearanceSettingsScreen(
                     )
                     HubDivider()
                     SettingsSwitchItem(
+                        title = "Liquid Glass",
+                        subtitle = "Enable premium frosted blur effects for the navigation bar",
+                        icon = Icons.Default.BlurOn,
+                        checked = settings.enableLiquidGlass,
+                        onChange = vm::setEnableLiquidGlass
+                    )
+                    HubDivider()
+                    SettingsSwitchItem(
                         title = "Show favicons",
                         subtitle = "Fetch website icons for login items",
                         icon = Icons.Default.Bookmark,
@@ -1502,10 +1512,10 @@ private fun SettingsSwitchItem(
                 )
             }
         }
-        Switch(
+        SpectreSwitch(
             checked = checked,
             onCheckedChange = onChange,
-            colors = SwitchDefaults.colors(
+            colors = SpectreSwitchDefaults.colors(
                 checkedThumbColor = Color.White,
                 checkedTrackColor = MaterialTheme.colorScheme.primary
             )

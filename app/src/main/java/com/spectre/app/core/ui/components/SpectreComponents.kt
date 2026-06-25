@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.*
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -22,6 +23,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
 import com.spectre.app.core.data.models.*
 import com.spectre.app.core.ui.theme.*
+import kotlin.math.absoluteValue
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 
 
 /**
@@ -703,4 +720,234 @@ fun SpectreSnackbar(
         }
     }
 }
+
+@Composable
+fun SpectreSwitch(
+    checked: Boolean,
+    onCheckedChange: ((Boolean) -> Unit)?,
+    modifier: Modifier = Modifier,
+    colors: SpectreSwitchColors = SpectreSwitchDefaults.colors(),
+    enabled: Boolean = true,
+) {
+    val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val isDragged by interactionSource.collectIsDraggedAsState()
+    val isHovered by interactionSource.collectIsHoveredAsState()
+
+    val view = androidx.compose.ui.platform.LocalView.current
+    val playHaptic = {
+        try {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
+
+    var hasVibrated by remember { mutableStateOf(false) }
+    var hasVibratedOnce by remember { mutableStateOf(false) }
+    var rawDragOffset by remember { mutableFloatStateOf(0f) }
+    var currentDragInteraction by remember { mutableStateOf<DragInteraction.Start?>(null) }
+
+    val capsuleShape = CircleShape
+    val thumbOffsetSpringSpec = remember { spring<Dp>(dampingRatio = 0.7f, stiffness = 987f) }
+    val thumbScaleSpringSpec = remember { spring<Float>(dampingRatio = 0.6f, stiffness = 987f) }
+
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val thumbOffsetState = animateDpAsState(
+        targetValue = (if (checked) 25.dp else 4.dp) + dragOffset.dp,
+        animationSpec = thumbOffsetSpringSpec,
+        label = "thumbOffset"
+    )
+
+    val thumbScaleState = animateFloatAsState(
+        targetValue = if (!enabled) {
+            1f
+        } else if (isPressed || isDragged || isHovered) {
+            1.127f
+        } else {
+            1f
+        },
+        animationSpec = thumbScaleSpringSpec,
+        label = "thumbScale"
+    )
+
+    val thumbColorState = animateColorAsState(
+        if (checked) colors.checkedThumbColor(enabled) else colors.uncheckedThumbColor(enabled),
+        label = "thumbColor"
+    )
+
+    val backgroundColorState = animateColorAsState(
+        if (checked) colors.checkedTrackColor(enabled) else colors.uncheckedTrackColor(enabled),
+        animationSpec = spring(dampingRatio = 0.99f, stiffness = 438.6f),
+        label = "backgroundColor"
+    )
+
+    val hasCallback = onCheckedChange != null
+    val toggleableModifier = if (hasCallback) {
+        remember(checked, enabled, interactionSource) {
+            Modifier.toggleable(
+                value = checked,
+                onValueChange = { v ->
+                    currentOnCheckedChange?.invoke(v)
+                    playHaptic()
+                },
+                enabled = enabled,
+                role = Role.Switch,
+                interactionSource = interactionSource,
+            )
+        }
+    } else {
+        Modifier.semantics {
+            role = Role.Switch
+            toggleableState = ToggleableState(checked)
+            if (!enabled) disabled()
+        }
+    }
+
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    Box(
+        modifier = modifier
+            .wrapContentSize(Alignment.Center)
+            .size(49.dp, 28.dp)
+            .clip(capsuleShape)
+            .drawBehind {
+                drawRect(backgroundColorState.value)
+            }
+            .hoverable(
+                interactionSource = interactionSource,
+                enabled = enabled,
+            )
+            .then(toggleableModifier),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .align(Alignment.CenterStart)
+                .offset {
+                    IntOffset(thumbOffsetState.value.roundToPx(), 0)
+                }
+                .graphicsLayer {
+                    scaleX = thumbScaleState.value
+                    scaleY = thumbScaleState.value
+                }
+                .drawBehind {
+                    drawCircle(color = thumbColorState.value)
+                }
+                .then(
+                    if (enabled) {
+                        Modifier.draggable(
+                            orientation = Orientation.Horizontal,
+                            state = rememberDraggableState { dragAmount ->
+                                val dragAmountDp = with(density) { dragAmount.toDp().value }
+                                rawDragOffset += dragAmountDp
+                                dragOffset = if (checked) {
+                                    rawDragOffset.coerceIn(-21f, 0f)
+                                } else {
+                                    rawDragOffset.coerceIn(0f, 21f)
+                                }
+
+                                if (dragOffset in -11f..-10f || dragOffset in 10f..11f) {
+                                    hasVibratedOnce = false
+                                } else if (dragOffset in -20f..-1f || dragOffset in 1f..20f) {
+                                    hasVibrated = false
+                                } else if (!hasVibrated) {
+                                    if ((checked && dragOffset == -21f) || (!checked && dragOffset == 0f)) {
+                                        playHaptic()
+                                        hasVibrated = true
+                                        hasVibratedOnce = true
+                                    } else if ((checked && dragOffset == 0f) || (!checked && dragOffset == 21f)) {
+                                        playHaptic()
+                                        hasVibrated = true
+                                        hasVibratedOnce = true
+                                    }
+                                }
+                            },
+                            onDragStarted = { _ ->
+                                currentDragInteraction = DragInteraction.Start().also { interactionSource.tryEmit(it) }
+                                hasVibrated = true
+                                hasVibratedOnce = false
+                                rawDragOffset = 0f
+                            },
+                            onDragStopped = {
+                                if (dragOffset.absoluteValue > 21f / 2f) currentOnCheckedChange?.invoke(!checked)
+                                if (!hasVibratedOnce && dragOffset.absoluteValue >= 1f) {
+                                    if ((checked && dragOffset <= -11f) || (!checked && dragOffset <= 10f)) {
+                                        playHaptic()
+                                    } else if ((checked && dragOffset >= -10f) || (!checked && dragOffset >= 11f)) {
+                                        playHaptic()
+                                    }
+                                }
+                                currentDragInteraction?.let { interactionSource.tryEmit(DragInteraction.Stop(it)) }
+                                dragOffset = 0f
+                                rawDragOffset = 0f
+                            },
+                        )
+                    } else {
+                        Modifier
+                    },
+                ),
+        )
+    }
+}
+
+@Immutable
+data class SpectreSwitchColors(
+    val checkedThumbColor: Color,
+    val uncheckedThumbColor: Color,
+    val disabledCheckedThumbColor: Color,
+    val disabledUncheckedThumbColor: Color,
+    val checkedTrackColor: Color,
+    val uncheckedTrackColor: Color,
+    val disabledCheckedTrackColor: Color,
+    val disabledUncheckedTrackColor: Color,
+) {
+    @Stable
+    fun checkedThumbColor(enabled: Boolean): Color = if (enabled) checkedThumbColor else disabledCheckedThumbColor
+
+    @Stable
+    fun uncheckedThumbColor(enabled: Boolean): Color = if (enabled) uncheckedThumbColor else disabledUncheckedThumbColor
+
+    @Stable
+    fun checkedTrackColor(enabled: Boolean): Color = if (enabled) checkedTrackColor else disabledCheckedTrackColor
+
+    @Stable
+    fun uncheckedTrackColor(enabled: Boolean): Color = if (enabled) uncheckedTrackColor else disabledUncheckedTrackColor
+}
+
+object SpectreSwitchDefaults {
+    @Composable
+    fun colors(
+        checkedThumbColor: Color = Color.White,
+        uncheckedThumbColor: Color = Color.White,
+        disabledCheckedThumbColor: Color = Color.White.copy(alpha = 0.5f),
+        disabledUncheckedThumbColor: Color = Color.White.copy(alpha = 0.5f),
+        checkedTrackColor: Color = MaterialTheme.colorScheme.primary,
+        uncheckedTrackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
+        disabledCheckedTrackColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+        disabledUncheckedTrackColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    ): SpectreSwitchColors = remember(
+        checkedThumbColor,
+        uncheckedThumbColor,
+        disabledCheckedThumbColor,
+        disabledUncheckedThumbColor,
+        checkedTrackColor,
+        uncheckedTrackColor,
+        disabledCheckedTrackColor,
+        disabledUncheckedTrackColor,
+    ) {
+        SpectreSwitchColors(
+            checkedThumbColor = checkedThumbColor,
+            uncheckedThumbColor = uncheckedThumbColor,
+            disabledCheckedThumbColor = disabledCheckedThumbColor,
+            disabledUncheckedThumbColor = disabledUncheckedThumbColor,
+            checkedTrackColor = checkedTrackColor,
+            uncheckedTrackColor = uncheckedTrackColor,
+            disabledCheckedTrackColor = disabledCheckedTrackColor,
+            disabledUncheckedTrackColor = disabledUncheckedTrackColor,
+        )
+    }
+}
+
 

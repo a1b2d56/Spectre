@@ -76,6 +76,9 @@ data class SpectreSettings(
     val isBold: Boolean                     = false,
     val fontFamily: String                  = "default",
     val linkCleanerEnabled: Boolean         = true,
+    val updateCheckInterval: UpdateCheckInterval = UpdateCheckInterval.MANUAL,
+    val lastUpdateCheckTime: Long           = 0L,
+    val enableLiquidGlass: Boolean          = false,
 )
 
 enum class LockTimeout(val seconds: Int, val label: String) {
@@ -94,6 +97,13 @@ enum class SyncInterval(val minutes: Int, val label: String) {
     ONE_HOUR(60,         "1 hour"),
     FOUR_HOURS(240,      "4 hours"),
     MANUAL(-1,           "Manual only"),
+}
+
+enum class UpdateCheckInterval(val days: Int, val label: String) {
+    MANUAL(-1, "Manual only"),
+    DAILY(1, "Every 24 hours"),
+    THREE_DAYS(3, "Every 3 days"),
+    WEEKLY(7, "Every 7 days"),
 }
 
 enum class VaultSortOrder(val label: String) {
@@ -165,6 +175,9 @@ class SpectrePreferences @Inject constructor(
         val IS_BOLD                  = booleanPreferencesKey("is_bold")
         val FONT_FAMILY              = stringPreferencesKey("font_family")
         val LINK_CLEANER_ENABLED     = booleanPreferencesKey("link_cleaner_enabled")
+        val UPDATE_CHECK_INTERVAL    = stringPreferencesKey("update_check_interval")
+        val LAST_UPDATE_CHECK_TIME   = longPreferencesKey("last_update_check_time")
+        val ENABLE_LIQUID_GLASS      = booleanPreferencesKey("enable_liquid_glass")
     }
 
     val settings: Flow<SpectreSettings> = context.dataStore.data
@@ -227,6 +240,9 @@ class SpectrePreferences @Inject constructor(
                 isBold                 = prefs[Keys.IS_BOLD]                  ?: false,
                 fontFamily             = prefs[Keys.FONT_FAMILY]              ?: "default",
                 linkCleanerEnabled     = prefs[Keys.LINK_CLEANER_ENABLED]     ?: true,
+                updateCheckInterval    = runCatching { UpdateCheckInterval.valueOf(prefs[Keys.UPDATE_CHECK_INTERVAL] ?: "") }.getOrDefault(UpdateCheckInterval.MANUAL),
+                lastUpdateCheckTime    = prefs[Keys.LAST_UPDATE_CHECK_TIME]   ?: 0L,
+                enableLiquidGlass      = prefs[Keys.ENABLE_LIQUID_GLASS]      ?: false,
             )
         }
 
@@ -286,6 +302,9 @@ class SpectrePreferences @Inject constructor(
     suspend fun setIsBold(b: Boolean) = update { it[Keys.IS_BOLD] = b }
     suspend fun setFontFamily(f: String) = update { it[Keys.FONT_FAMILY] = f }
     suspend fun setLinkCleanerEnabled(v: Boolean) = update { it[Keys.LINK_CLEANER_ENABLED] = v }
+    suspend fun setUpdateCheckInterval(i: UpdateCheckInterval) = update { it[Keys.UPDATE_CHECK_INTERVAL] = i.name }
+    suspend fun setLastUpdateCheckTime(t: Long) = update { it[Keys.LAST_UPDATE_CHECK_TIME] = t }
+    suspend fun setEnableLiquidGlass(v: Boolean) = update { it[Keys.ENABLE_LIQUID_GLASS] = v }
 
     private suspend fun update(transform: (MutablePreferences) -> Unit) {
         context.dataStore.edit(transform)
